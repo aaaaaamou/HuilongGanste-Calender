@@ -55,7 +55,7 @@
                 <div v-if="isInitializing" class="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
                     <div class="flex flex-col items-center">
                         <i data-lucide="loader-2" class="w-8 h-8 text-blue-600 animate-spin mb-2"></i>
-                        <span class="text-sm text-gray-600 font-medium">連線至雲端伺服器...</span>
+                        <span class="text-sm text-gray-600 font-medium">系統初始化中...</span>
                     </div>
                 </div>
 
@@ -87,9 +87,9 @@
         <!-- ================= 主日曆畫面 ================= -->
         <div v-else class="flex-grow flex flex-col h-full relative">
             
-            <!-- 雲端同步狀態提示 -->
-            <div v-if="!isDbConnected" class="absolute top-0 left-0 right-0 bg-amber-100 text-amber-800 text-xs text-center py-1 z-50 flex justify-center items-center">
-                <i data-lucide="wifi-off" class="w-3 h-3 mr-1"></i> 雲端連線中斷或尚未連線，您目前可能看到的是舊資料。
+            <!-- 雲端同步狀態提示 (僅在雲端模式下斷線時顯示) -->
+            <div v-if="storageMode === 'cloud' && !isDbConnected" class="absolute top-0 left-0 right-0 bg-amber-100 text-amber-800 text-xs text-center py-1 z-50 flex justify-center items-center">
+                <i data-lucide="wifi-off" class="w-3 h-3 mr-1"></i> 雲端連線中斷，您目前可能看到的是舊資料。
             </div>
 
             <!-- 頂部導覽列 -->
@@ -100,13 +100,17 @@
                     </div>
                     <h1 class="text-xl font-bold text-gray-800 flex items-center">
                         團隊共用日曆
-                        <span class="ml-3 flex items-center text-[10px] bg-green-50 text-green-600 px-2 py-0.5 rounded-full border border-green-200">
-                            <span class="w-1.5 h-1.5 rounded-full bg-green-500 mr-1 animate-pulse"></span>
-                            雲端同步中
+                        
+                        <span class="ml-3 flex items-center text-[10px] bg-gray-800 text-white px-2 py-0.5 rounded-full" title="資料直接儲存於 GitHub Repo">
+                            <i data-lucide="github" class="w-3 h-3 mr-1"></i>
+                            GitHub 直連模式
                         </span>
                     </h1>
                 </div>
                 <div class="flex items-center space-x-4">
+                    <button @click="loadFromGitHub(true)" :disabled="isLoadingEvents" class="text-sm text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full transition-colors disabled:opacity-50" title="手動抓取最新資料">
+                        <i data-lucide="refresh-cw" class="w-4 h-4 mr-1" :class="{'animate-spin': isLoadingEvents}"></i> 同步最新
+                    </button>
                     <div class="flex items-center text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
                         <i data-lucide="user" class="w-4 h-4 mr-2"></i>
                         目前身分：<span class="font-semibold text-gray-800 ml-1">{{ currentUser }}</span>
@@ -273,28 +277,21 @@
         </div>
     </div>
 
-    <!-- Vue 與 Firebase 模組化引入 -->
     <script type="module">
         import { createApp, ref, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
         
-        // 引入 Firebase 雲端模組
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
-        import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
-
-        // 1. 初始化 Firebase (全域設定)
-        let app, auth, db, appId, eventsColRef;
-        try {
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            // 公開共享資料庫路徑 (所有人共用)
-            eventsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'events');
-        } catch (error) {
-            console.error("Firebase 初始化失敗:", error);
-        }
+        // =========================================================================
+        // ⚠️ 必填設定：請在這裡填寫您的 GitHub 專案資訊 (部署前務必修改)
+        // =========================================================================
+        // const GITHUB_USERNAME = 'YOUR_GITHUB_USERNAME'; // 您的 GitHub 帳號 (例如: 'wang')
+        // const GITHUB_REPO = 'YOUR_REPO_NAME';           // 您的專案名稱 (例如: 'shared-calendar')
+        // const GITHUB_TOKEN = 'YOUR_GITHUB_TOKEN';       // ⚠️ 您的 GitHub Token
+        const GITHUB_USERNAME = 'aaaaaamou'; 
+        const GITHUB_REPO = 'HuilongGanste-Calender';
+        const GITHUB_TOKEN = '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';
+        const GITHUB_FILE_PATH = 'data.json';           // 存放資料的檔案名稱
+        const GITHUB_BRANCH = 'main';                   // 分支名稱 (通常是 main 或 master)
+        // =========================================================================
 
         createApp({
             setup() {
@@ -304,23 +301,21 @@
                 const calendarEl = ref(null);
                 let calendar = null;
                 
-                // 雲端與載入狀態
-                const fbUser = ref(null); // Firebase 認證使用者
-                const isInitializing = ref(true); // 是否正在連線雲端
-                const isDbConnected = ref(false); // 雲端是否成功連線
-                const isLoadingEvents = ref(false); // 日曆資料載入中
-                const isSaving = ref(false); // 活動儲存中
-                let unsubscribeSnapshot = null; // 註銷監聽器
+                // GitHub 狀態
+                const isInitializing = ref(false); 
+                const isLoadingEvents = ref(false); 
+                const isSaving = ref(false); 
+                const currentSha = ref(null); // 用於追蹤 GitHub 檔案版本，避免覆蓋衝突
                 
                 // Modal 狀態
                 const showModal = ref(false);
-                const modalMode = ref('add'); // 'add', 'edit', 'view'
+                const modalMode = ref('add'); 
                 const currentEvent = ref({
                     id: '', title: '', start: '', end: '', 
                     extendedProps: { creator: '', description: '' }
                 });
 
-                // ================= Gemini API 整合 =================
+                // ================= Gemini API 整合 (保留原功能) =================
                 const apiKey = "";
                 const aiParseText = ref('');
                 const isParsingAI = ref(false);
@@ -329,123 +324,162 @@
 
                 const callGemini = async (prompt, expectJson = false, systemInstruction = "") => {
                     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-                    const payload = {
-                        contents: [{ parts: [{ text: prompt }] }]
-                    };
-                    if (systemInstruction) {
-                        payload.systemInstruction = { parts: [{ text: systemInstruction }] };
-                    }
-                    if (expectJson) {
-                        payload.generationConfig = { responseMimeType: "application/json" };
-                    }
+                    const payload = { contents: [{ parts: [{ text: prompt }] }] };
+                    if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] };
+                    if (expectJson) payload.generationConfig = { responseMimeType: "application/json" };
 
-                    const delays = [1000, 2000, 4000, 8000, 16000];
-                    let lastError;
-                    
-                    for (let i = 0; i < delays.length + 1; i++) {
+                    for (let i = 0; i < 3; i++) {
                         try {
-                            const response = await fetch(url, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify(payload)
-                            });
+                            const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
                             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                             const data = await response.json();
                             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
                             return expectJson ? JSON.parse(text) : text;
                         } catch (e) {
-                            lastError = e;
-                            if (i < delays.length) {
-                                await new Promise(res => setTimeout(res, delays[i]));
-                            }
+                            if (i < 2) await new Promise(res => setTimeout(res, 1000));
+                            else throw e;
                         }
                     }
-                    throw lastError;
                 };
 
                 const parseTextWithAI = async () => {
                     if (!aiParseText.value.trim() || isParsingAI.value) return;
                     isParsingAI.value = true;
-                    aiErrorMsg.value = '';
                     try {
                         const today = new Date().toISOString();
                         const selectedDate = currentEvent.value.start; 
-                        const prompt = `
-                            請從以下文本中提取活動細節。現在時間是：${today}。使用者點擊的基準日期是：${selectedDate}
-                            文本："${aiParseText.value}"
-                            請回傳 JSON 格式，必須包含 key:
-                            - "title" (字串): 標題推測
-                            - "start" (字串): ISO 8601。若無具體日期用基準日期+時間。若無時間預設 10:00。
-                            - "end" (字串): ISO 8601。預設開始後1小時。
-                            - "description" (字串): 備註。
-                        `;
-                        const systemInstruction = "你是一個幫助使用者從自然語言對話中提取日曆活動參數的得力助手。嚴格輸出 JSON。";
-                        const result = await callGemini(prompt, true, systemInstruction);
+                        const prompt = `提取活動細節。現在時間：${today}。基準日期：${selectedDate}。文本："${aiParseText.value}"。回傳 JSON: title, start(ISO), end(ISO), description。`;
+                        const result = await callGemini(prompt, true, "嚴格輸出 JSON。");
                         
                         if (result.title) currentEvent.value.title = result.title;
                         if (result.start) currentEvent.value.start = result.start;
                         if (result.end) currentEvent.value.end = result.end;
                         if (result.description) currentEvent.value.extendedProps.description = result.description;
-                        
                         aiParseText.value = ''; 
-                        nextTick(initIcons);
                     } catch (error) {
-                        aiErrorMsg.value = "AI 解析失敗，請稍後再試。";
-                        setTimeout(() => aiErrorMsg.value = '', 4000);
-                    } finally {
-                        isParsingAI.value = false;
-                    }
+                        aiErrorMsg.value = "AI 解析失敗。"; setTimeout(() => aiErrorMsg.value = '', 4000);
+                    } finally { isParsingAI.value = false; }
                 };
 
                 const polishDescriptionWithAI = async () => {
                     if (!currentEvent.value.extendedProps.description || isPolishing.value) return;
                     isPolishing.value = true;
                     try {
-                        const prompt = `請將以下活動備註潤飾使其語氣更專業。直接輸出潤飾後結果：\n\n"${currentEvent.value.extendedProps.description}"`;
-                        const result = await callGemini(prompt, false, "你是專業的秘書。");
+                        const result = await callGemini(`潤飾備註，直接輸出：\n\n"${currentEvent.value.extendedProps.description}"`, false, "你是專業秘書。");
                         if (result) currentEvent.value.extendedProps.description = result.trim();
+                    } catch (error) {} finally { isPolishing.value = false; }
+                };
+
+                // ================= GitHub API 讀寫邏輯 =================
+                // 處理 Base64 編碼 (支援中文)
+                const utf8ToBase64 = (str) => btoa(unescape(encodeURIComponent(str)));
+                const base64ToUtf8 = (str) => decodeURIComponent(escape(atob(str)));
+
+                // 從 GitHub 讀取資料
+                const loadFromGitHub = async (isManual = false) => {
+                    if (!GITHUB_TOKEN || GITHUB_TOKEN === 'YOUR_GITHUB_TOKEN') return [];
+                    isLoadingEvents.value = true;
+                    try {
+                        // 加入時間戳避免瀏覽器快取
+                        const url = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}?ref=${GITHUB_BRANCH}&t=${Date.now()}`;
+                        const res = await fetch(url, {
+                            headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json' }
+                        });
+                        
+                        if (res.status === 404) {
+                            isLoadingEvents.value = false;
+                            return []; // 檔案還不存在
+                        }
+                        if (!res.ok) throw new Error(`GitHub API Error: ${res.status}`);
+                        
+                        const data = await res.json();
+                        currentSha.value = data.sha; // 記錄當前版本
+                        
+                        const contentStr = base64ToUtf8(data.content);
+                        const events = JSON.parse(contentStr);
+                        
+                        if (calendar) {
+                            calendar.removeAllEvents();
+                            calendar.addEventSource(events);
+                        }
+                        isLoadingEvents.value = false;
+                        if (isManual) alert("已同步最新資料！");
+                        return events;
                     } catch (error) {
-                        console.error("AI 潤飾失敗:", error);
-                    } finally {
-                        isPolishing.value = false;
+                        console.error("讀取 GitHub 失敗:", error);
+                        isLoadingEvents.value = false;
+                        if (isManual) alert("同步失敗，請檢查設定與網路。");
+                        return [];
                     }
                 };
-                // ===================================================
 
-                // 工具函式
-                const initIcons = () => {
-                    nextTick(() => {
-                        if (window.lucide) window.lucide.createIcons();
-                    });
+                // 儲存資料到 GitHub
+                const pushToGitHub = async (eventsArray) => {
+                    try {
+                        // 為了避免衝突，存檔前先抓取最新的 SHA
+                        const getRes = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}?ref=${GITHUB_BRANCH}&t=${Date.now()}`, {
+                            headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+                        });
+                        if (getRes.ok) {
+                            const getData = await getRes.json();
+                            currentSha.value = getData.sha;
+                        }
+
+                        const contentStr = JSON.stringify(eventsArray, null, 2);
+                        const body = {
+                            message: `Update calendar events via App by ${currentUser.value}`,
+                            content: utf8ToBase64(contentStr),
+                            branch: GITHUB_BRANCH
+                        };
+                        if (currentSha.value) body.sha = currentSha.value;
+
+                        const res = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`, {
+                            method: 'PUT',
+                            headers: { 
+                                'Authorization': `token ${GITHUB_TOKEN}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (!res.ok) throw new Error(`GitHub Save Error: ${res.status}`);
+                        const data = await res.json();
+                        currentSha.value = data.content.sha; // 更新本地紀錄的 SHA
+                        return true;
+                    } catch (error) {
+                        console.error("寫入 GitHub 失敗:", error);
+                        throw error;
+                    }
                 };
+
+                // ================= 工具與日曆管理 =================
+                const initIcons = () => { nextTick(() => { if (window.lucide) window.lucide.createIcons(); }); };
 
                 const formatDateDisplay = (dateStr) => {
                     if (!dateStr) return '';
                     const d = new Date(dateStr);
-                    return d.toLocaleString('zh-TW', { 
-                        month: 'short', day: 'numeric', 
-                        hour: '2-digit', minute: '2-digit'
-                    });
+                    return d.toLocaleString('zh-TW', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                 };
 
                 const getColorForUser = (username) => {
                     let hash = 0;
-                    for (let i = 0; i < username.length; i++) {
-                        hash = username.charCodeAt(i) + ((hash << 5) - hash);
-                    }
-                    const h = Math.abs(hash) % 360;
-                    return `hsl(${h}, 70%, 45%)`; 
+                    for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
+                    return `hsl(${Math.abs(hash) % 360}, 70%, 45%)`; 
                 };
 
-                // 登入邏輯
+                // 登入登出
                 const login = () => {
-                    if (nameInput.value.trim() && !isInitializing.value) {
+                    if (nameInput.value.trim()) {
+                        if (GITHUB_TOKEN === 'YOUR_GITHUB_TOKEN') {
+                            alert("⚠️ 請先在程式碼中填寫您的 GitHub 專案資訊與 Token！");
+                            return;
+                        }
                         currentUser.value = nameInput.value.trim();
                         localStorage.setItem('cal_user', currentUser.value);
                         nextTick(() => {
                             initCalendar();
                             initIcons();
-                            if (fbUser.value) subscribeToFirestore(); // 確定身份後開始監聽雲端資料
+                            loadFromGitHub();
                         });
                     }
                 };
@@ -454,118 +488,59 @@
                     currentUser.value = '';
                     localStorage.removeItem('cal_user');
                     if (calendar) calendar.destroy();
-                    if (unsubscribeSnapshot) {
-                        unsubscribeSnapshot();
-                        unsubscribeSnapshot = null;
-                    }
                     setTimeout(initIcons, 100);
                 };
 
-                // ================= Firestore 雲端同步核心邏輯 =================
-                // 認證初始化 (強制在所有資料庫操作前執行)
-                const initAuth = async () => {
-                    if (!auth) {
-                        isInitializing.value = false;
-                        return;
-                    }
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    } catch (error) {
-                        console.error("Firebase 登入失敗:", error);
-                        isInitializing.value = false;
-                    }
-                };
-
-                // 訂閱雲端資料庫更新 (即時同步)
-                const subscribeToFirestore = () => {
-                    if (!fbUser.value || !eventsColRef) return;
-                    
-                    isLoadingEvents.value = true;
-                    isDbConnected.value = true;
-                    
-                    if (unsubscribeSnapshot) unsubscribeSnapshot();
-
-                    unsubscribeSnapshot = onSnapshot(eventsColRef, 
-                        (snapshot) => {
-                            const eventsData = [];
-                            snapshot.forEach(docSnap => {
-                                eventsData.push({ id: docSnap.id, ...docSnap.data() });
-                            });
-                            
-                            // 更新到 FullCalendar 畫面
-                            if (calendar) {
-                                calendar.removeAllEvents();
-                                calendar.addEventSource(eventsData);
-                            }
-                            isLoadingEvents.value = false;
-                        }, 
-                        (error) => {
-                            console.error("雲端連線或讀取失敗:", error);
-                            isDbConnected.value = false;
-                            isLoadingEvents.value = false;
-                        }
-                    );
-                };
-
-                // 雲端儲存事件 (新增/編輯)
+                // ================= 統一的資料儲存處理 (GitHub 版) =================
                 const saveEvent = async () => {
-                    if (!currentEvent.value.title.trim()) {
-                        alert("請輸入活動標題！");
-                        return;
-                    }
-                    if (!fbUser.value) {
-                        alert("尚未成功連線至雲端，無法儲存！");
-                        return;
-                    }
-
-                    isSaving.value = true;
+                    if (!currentEvent.value.title.trim()) { alert("請輸入活動標題！"); return; }
                     
-                    // 準備要送往雲端的乾淨資料結構
+                    isSaving.value = true;
                     const eventPayload = {
-                        title: currentEvent.value.title,
-                        start: currentEvent.value.start,
-                        end: currentEvent.value.end,
-                        backgroundColor: currentEvent.value.backgroundColor,
-                        borderColor: currentEvent.value.borderColor,
-                        extendedProps: {
-                            creator: currentEvent.value.extendedProps.creator,
-                            description: currentEvent.value.extendedProps.description
-                        }
+                        title: currentEvent.value.title, start: currentEvent.value.start, end: currentEvent.value.end,
+                        backgroundColor: currentEvent.value.backgroundColor, borderColor: currentEvent.value.borderColor,
+                        extendedProps: { creator: currentEvent.value.extendedProps.creator, description: currentEvent.value.extendedProps.description }
                     };
 
                     try {
+                        const currentEvents = calendar.getEvents().map(e => ({
+                            id: e.id, title: e.title, start: e.startStr, end: e.endStr,
+                            backgroundColor: e.backgroundColor, borderColor: e.borderColor,
+                            extendedProps: { creator: e.extendedProps.creator, description: e.extendedProps.description }
+                        }));
+
                         if (modalMode.value === 'add') {
-                            // Firestore 自動產生 ID
-                            await addDoc(eventsColRef, eventPayload);
+                            currentEvents.push({ id: Date.now().toString(), ...eventPayload });
                         } else if (modalMode.value === 'edit') {
-                            // 更新現有 ID 的文件
-                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', currentEvent.value.id);
-                            await updateDoc(docRef, eventPayload);
+                            const idx = currentEvents.findIndex(e => e.id === currentEvent.value.id);
+                            if (idx > -1) currentEvents[idx] = { id: currentEvent.value.id, ...eventPayload };
                         }
+                        
+                        await pushToGitHub(currentEvents);
+                        loadFromGitHub(); // 儲存後重新讀取確保畫面正確
                         showModal.value = false;
                     } catch (error) {
-                        console.error("雲端儲存失敗:", error);
-                        alert("儲存失敗，請檢查網路連線。");
+                        alert("儲存至 GitHub 失敗！可能是多人同時編輯發生衝突，請點擊「同步最新」後再試。");
                     } finally {
                         isSaving.value = false;
                     }
                 };
 
-                // 雲端刪除事件
                 const deleteEvent = async () => {
-                    if (!fbUser.value) return;
                     if(confirm('確定要刪除這個活動嗎？')) {
                         isSaving.value = true;
                         try {
-                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', currentEvent.value.id);
-                            await deleteDoc(docRef);
+                            let currentEvents = calendar.getEvents().map(e => ({
+                                id: e.id, title: e.title, start: e.startStr, end: e.endStr,
+                                backgroundColor: e.backgroundColor, borderColor: e.borderColor,
+                                extendedProps: { creator: e.extendedProps.creator, description: e.extendedProps.description }
+                            }));
+                            
+                            currentEvents = currentEvents.filter(e => e.id !== currentEvent.value.id);
+                            await pushToGitHub(currentEvents);
+                            loadFromGitHub();
                             showModal.value = false;
                         } catch (error) {
-                            console.error("刪除失敗:", error);
                             alert("刪除失敗。");
                         } finally {
                             isSaving.value = false;
@@ -573,53 +548,42 @@
                     }
                 };
 
-                // 拖曳與調整時間的雲端更新
-                const updateEventTimeOnCloud = async (info) => {
-                    if (!fbUser.value) {
-                        info.revert(); // 退回原位
-                        return;
-                    }
+                const updateEventTimeOnCalendar = async (info) => {
                     try {
-                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', info.event.id);
-                        await updateDoc(docRef, {
-                            start: info.event.startStr,
-                            end: info.event.endStr || info.event.startStr
-                        });
+                        const currentEvents = calendar.getEvents().map(e => ({
+                            id: e.id, title: e.title, start: e.startStr, end: e.endStr,
+                            backgroundColor: e.backgroundColor, borderColor: e.borderColor,
+                            extendedProps: { creator: e.extendedProps.creator, description: e.extendedProps.description }
+                        }));
+                        
+                        const idx = currentEvents.findIndex(e => e.id === info.event.id);
+                        if (idx > -1) {
+                            currentEvents[idx].start = info.event.startStr;
+                            currentEvents[idx].end = info.event.endStr || info.event.startStr;
+                            await pushToGitHub(currentEvents);
+                        }
                     } catch (error) {
                         console.error("更新時間失敗:", error);
-                        info.revert(); // 若雲端更新失敗，退回原位
+                        info.revert(); 
+                        alert("時間更新失敗，已退回原位。");
                     }
                 };
 
                 // ================= FullCalendar 初始化 =================
                 const initCalendar = () => {
                     if (!calendarEl.value) return;
-                    
                     calendar = new FullCalendar.Calendar(calendarEl.value, {
                         locale: 'zh-tw',
                         initialView: 'dayGridMonth',
-                        headerToolbar: {
-                            left: 'prev,next today',
-                            center: 'title',
-                            right: 'dayGridMonth,timeGridWeek'
-                        },
-                        events: [], // 資料改由 Firestore 監聽器動態推入
-                        selectable: true,
-                        editable: true, 
-                        height: '100%',
+                        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek' },
+                        events: [], 
+                        selectable: true, editable: true, height: '100%',
                         
                         select: (info) => {
                             currentEvent.value = {
-                                id: '',
-                                title: '',
-                                start: info.startStr,
-                                end: info.endStr || info.startStr,
-                                backgroundColor: getColorForUser(currentUser.value),
-                                borderColor: getColorForUser(currentUser.value),
-                                extendedProps: {
-                                    creator: currentUser.value,
-                                    description: ''
-                                }
+                                id: '', title: '', start: info.startStr, end: info.endStr || info.startStr,
+                                backgroundColor: getColorForUser(currentUser.value), borderColor: getColorForUser(currentUser.value),
+                                extendedProps: { creator: currentUser.value, description: '' }
                             };
                             modalMode.value = 'add';
                             showModal.value = true;
@@ -629,20 +593,11 @@
                         eventClick: (info) => {
                             const evt = info.event;
                             const isCreator = evt.extendedProps.creator === currentUser.value;
-                            
                             currentEvent.value = {
-                                id: evt.id,
-                                title: evt.title,
-                                start: evt.startStr,
-                                end: evt.endStr || evt.startStr,
-                                backgroundColor: evt.backgroundColor,
-                                borderColor: evt.borderColor,
-                                extendedProps: {
-                                    creator: evt.extendedProps.creator,
-                                    description: evt.extendedProps.description || ''
-                                }
+                                id: evt.id, title: evt.title, start: evt.startStr, end: evt.endStr || evt.startStr,
+                                backgroundColor: evt.backgroundColor, borderColor: evt.borderColor,
+                                extendedProps: { creator: evt.extendedProps.creator, description: evt.extendedProps.description || '' }
                             };
-                            
                             modalMode.value = isCreator ? 'edit' : 'view';
                             showModal.value = true;
                             initIcons();
@@ -650,49 +605,27 @@
 
                         eventDrop: (info) => {
                             if (info.event.extendedProps.creator !== currentUser.value) {
-                                alert('系統提示：您只能移動自己建立的活動喔！');
-                                info.revert();
-                                return;
+                                alert('系統提示：您只能移動自己建立的活動喔！'); info.revert(); return;
                             }
-                            updateEventTimeOnCloud(info);
+                            updateEventTimeOnCalendar(info);
                         },
                         eventResize: (info) => {
                             if (info.event.extendedProps.creator !== currentUser.value) {
-                                alert('系統提示：您只能修改自己建立的活動喔！');
-                                info.revert();
-                                return;
+                                alert('系統提示：您只能修改自己建立的活動喔！'); info.revert(); return;
                             }
-                            updateEventTimeOnCloud(info);
+                            updateEventTimeOnCalendar(info);
                         }
                     });
-                    
                     calendar.render();
                 };
 
                 // ================= 生命週期與初始化 =================
                 onMounted(() => {
                     initIcons();
-                    
-                    // 執行 Firebase 登入流程
-                    if (auth) {
-                        initAuth();
-                        // 監聽登入狀態
-                        onAuthStateChanged(auth, (user) => {
-                            fbUser.value = user;
-                            isInitializing.value = false;
-                            
-                            // 若使用者已在本機設定過名稱，且 Firebase 驗證通過，自動開始同步資料
-                            if (user && currentUser.value) {
-                                subscribeToFirestore();
-                            }
-                        });
-                    } else {
-                        isInitializing.value = false;
-                    }
-
                     if (currentUser.value) {
                         nextTick(() => {
                             initCalendar();
+                            loadFromGitHub(); // 登入後自動從 GitHub 抓取最新資料
                         });
                     }
                 });
@@ -701,9 +634,9 @@
                     currentUser, nameInput, login, logout,
                     calendarEl, showModal, modalMode, currentEvent,
                     saveEvent, deleteEvent, formatDateDisplay,
-                    isInitializing, isDbConnected, isLoadingEvents, isSaving,
-                    aiParseText, isParsingAI, isPolishing, aiErrorMsg, 
-                    parseTextWithAI, polishDescriptionWithAI
+                    isInitializing, isLoadingEvents, isSaving, 
+                    loadFromGitHub, // 導出供畫面上的重新整理按鈕使用
+                    aiParseText, isParsingAI, isPolishing, aiErrorMsg, parseTextWithAI, polishDescriptionWithAI
                 }
             }
         }).mount('#app');
