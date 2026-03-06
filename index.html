@@ -16,48 +16,86 @@
     <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
-        /* 微調 FullCalendar 的樣式使其融入 Tailwind */
-        .fc-theme-standard td, .fc-theme-standard th {
-            border-color: #e5e7eb;
-        }
-        .fc-header-toolbar {
-            margin-bottom: 1.5rem !important;
-        }
-        .fc-button-primary {
-            background-color: #3b82f6 !important;
-            border-color: #3b82f6 !important;
-            text-transform: capitalize !important;
-        }
-        .fc-button-primary:hover {
-            background-color: #2563eb !important;
-            border-color: #2563eb !important;
-        }
-        .fc-button-active {
-            background-color: #1d4ed8 !important;
-        }
-        .fc-event {
-            cursor: pointer;
-            border-radius: 4px;
-            padding: 2px 4px;
-            transition: opacity 0.2s;
-        }
-        .fc-event-dragging {
-            opacity: 0.7;
-        }
+        .fc-theme-standard td, .fc-theme-standard th { border-color: #e5e7eb; }
+        .fc-header-toolbar { margin-bottom: 1.5rem !important; }
+        .fc-button-primary { background-color: #3b82f6 !important; border-color: #3b82f6 !important; text-transform: capitalize !important; }
+        .fc-button-primary:hover { background-color: #2563eb !important; border-color: #2563eb !important; }
+        .fc-button-active { background-color: #1d4ed8 !important; }
+        .fc-event { cursor: pointer; border-radius: 4px; padding: 2px 4px; transition: opacity 0.2s; }
+        .fc-event-dragging { opacity: 0.7; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 h-screen overflow-hidden font-sans">
     <div id="app" class="h-full flex flex-col">
         
-        <!-- ================= 登入畫面 ================= -->
-        <div v-if="!currentUser" class="flex-grow flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-            <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center relative overflow-hidden">
-                <div v-if="isInitializing" class="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
-                    <div class="flex flex-col items-center">
-                        <i data-lucide="loader-2" class="w-8 h-8 text-blue-600 animate-spin mb-2"></i>
-                        <span class="text-sm text-gray-600 font-medium">系統初始化中...</span>
+        <!-- ================= 步驟 1：資料庫設定畫面 (僅首次或未設定時顯示) ================= -->
+        <div v-if="!isConfigured" class="flex-grow flex items-center justify-center bg-gradient-to-br from-indigo-50 to-blue-100 p-4 overflow-y-auto">
+            <div class="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full text-left my-8">
+                <div class="flex items-center mb-6">
+                    <div class="bg-indigo-100 w-12 h-12 rounded-full flex items-center justify-center mr-4 shrink-0">
+                        <i data-lucide="database" class="text-indigo-600 w-6 h-6"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-800">系統初始化設定</h1>
+                        <p class="text-gray-500 text-sm">請設定您的 JSONBin 雲端資料庫</p>
                     </div>
                 </div>
+                
+                <div class="bg-blue-50 border border-blue-100 p-4 rounded-lg mb-6 text-sm text-blue-800 space-y-2">
+                    <p class="font-bold"><i data-lucide="info" class="w-4 h-4 inline mr-1 -mt-0.5"></i>如何取得 API Key？</p>
+                    <ol class="list-decimal pl-5 space-y-1">
+                        <li>前往 <a href="https://jsonbin.io/" target="_blank" class="underline font-semibold text-blue-600 hover:text-blue-800">JSONBin.io</a> 登入或免費註冊。</li>
+                        <li>在左側選單點擊 <strong>API Keys</strong>。</li>
+                        <li>點擊 <strong>+ Create New Key</strong>，複製那串 <code>$2a$10$...</code> 開頭的密碼。</li>
+                        <li>將密碼貼在下方，系統會自動幫您建立資料庫！</li>
+                    </ol>
+                </div>
+
+                <form @submit.prevent="setupDatabase" class="space-y-5">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">您的 API Key (Master Key) <span class="text-red-500">*</span></label>
+                        <input 
+                            v-model="setupApiKey" 
+                            type="password" 
+                            required
+                            placeholder="例如：$2a$10$abcde12345..." 
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono text-sm"
+                        >
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Bin ID (選填)</label>
+                        <input 
+                            v-model="setupBinId" 
+                            type="text" 
+                            placeholder="留空將自動為您建立一個新 Bin" 
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-mono text-sm bg-gray-50"
+                        >
+                        <p class="text-xs text-gray-500 mt-1">如果是團隊成員，請貼上隊長分享給您的 Bin ID。</p>
+                    </div>
+
+                    <p v-if="setupErrorMsg" class="text-red-500 text-sm flex items-center">
+                        <i data-lucide="alert-circle" class="w-4 h-4 mr-1"></i> {{ setupErrorMsg }}
+                    </p>
+
+                    <button 
+                        type="submit" 
+                        :disabled="isSettingUp"
+                        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-indigo-200 disabled:opacity-50 flex justify-center items-center"
+                    >
+                        <i v-if="isSettingUp" data-lucide="loader-2" class="w-5 h-5 mr-2 animate-spin"></i>
+                        {{ isSettingUp ? '連線並建立中...' : '儲存設定並開始使用' }}
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ================= 步驟 2：登入畫面 ================= -->
+        <div v-else-if="!currentUser" class="flex-grow flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+            <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center relative overflow-hidden">
+                <button @click="resetConfig" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition-colors" title="重新設定資料庫">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                </button>
 
                 <div class="mx-auto bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mb-6">
                     <i data-lucide="calendar-days" class="text-blue-600 w-8 h-8"></i>
@@ -71,12 +109,11 @@
                         type="text" 
                         required
                         placeholder="例如：王小明 或 ming@example.com" 
-                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                     >
                     <button 
                         type="submit" 
-                        :disabled="isInitializing"
-                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-blue-200 disabled:opacity-50"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-blue-200"
                     >
                         進入日曆
                     </button>
@@ -84,31 +121,24 @@
             </div>
         </div>
 
-        <!-- ================= 主日曆畫面 ================= -->
+        <!-- ================= 步驟 3：主日曆畫面 ================= -->
         <div v-else class="flex-grow flex flex-col h-full relative">
-            
-            <!-- 雲端同步狀態提示 (僅在雲端模式下斷線時顯示) -->
-            <div v-if="storageMode === 'cloud' && !isDbConnected" class="absolute top-0 left-0 right-0 bg-amber-100 text-amber-800 text-xs text-center py-1 z-50 flex justify-center items-center">
-                <i data-lucide="wifi-off" class="w-3 h-3 mr-1"></i> 雲端連線中斷，您目前可能看到的是舊資料。
-            </div>
-
             <!-- 頂部導覽列 -->
             <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0 mt-[1px]">
                 <div class="flex items-center space-x-3">
-                    <div class="bg-blue-600 w-8 h-8 rounded text-white flex items-center justify-center font-bold">
-                        C
+                    <div class="bg-blue-600 w-8 h-8 rounded text-white flex items-center justify-center font-bold">C</div>
+                    <div class="flex flex-col">
+                        <h1 class="text-xl font-bold text-gray-800 flex items-center">
+                            團隊共用日曆
+                            <span class="ml-3 flex items-center text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full">
+                                <i data-lucide="database" class="w-3 h-3 mr-1"></i> JSON 雲端
+                            </span>
+                        </h1>
+                        <span class="text-xs text-gray-400 font-mono mt-0.5" title="可將此 ID 分享給團隊成員">Bin ID: {{ setupBinId }}</span>
                     </div>
-                    <h1 class="text-xl font-bold text-gray-800 flex items-center">
-                        團隊共用日曆
-                        
-                        <span class="ml-3 flex items-center text-[10px] bg-gray-800 text-white px-2 py-0.5 rounded-full" title="資料直接儲存於 GitHub Repo">
-                            <i data-lucide="github" class="w-3 h-3 mr-1"></i>
-                            GitHub 直連模式
-                        </span>
-                    </h1>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <button @click="loadFromGitHub(true)" :disabled="isLoadingEvents" class="text-sm text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full transition-colors disabled:opacity-50" title="手動抓取最新資料">
+                    <button @click="loadFromCloud(true)" :disabled="isLoadingEvents" class="text-sm text-blue-600 hover:text-blue-800 flex items-center bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full transition-colors disabled:opacity-50" title="手動抓取最新資料">
                         <i data-lucide="refresh-cw" class="w-4 h-4 mr-1" :class="{'animate-spin': isLoadingEvents}"></i> 同步最新
                     </button>
                     <div class="flex items-center text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
@@ -136,7 +166,6 @@
         <!-- ================= 活動編輯/新增 Modal ================= -->
         <div v-if="showModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity">
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
-                <!-- Modal 標題 -->
                 <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
                     <h2 class="text-lg font-bold text-gray-800 flex items-center">
                         <i v-if="modalMode === 'add'" data-lucide="calendar-plus" class="w-5 h-5 mr-2 text-blue-600"></i>
@@ -149,90 +178,46 @@
                     </button>
                 </div>
                 
-                <!-- Modal 內容 -->
                 <div class="p-6 overflow-y-auto flex-grow space-y-4">
-                    
-                    <!-- ✨ AI 智能解析區塊 (僅在新增時顯示) -->
+                    <!-- ✨ AI 智能解析 -->
                     <div v-if="modalMode === 'add'" class="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-2">
                         <label class="block text-sm font-bold text-indigo-800 mb-2 flex items-center">
                             <span>✨ AI 智能建立</span>
                             <span class="text-xs font-normal text-indigo-600 ml-2">貼上對話或信件，讓 AI 自動解析</span>
                         </label>
                         <div class="flex space-x-2">
-                            <input 
-                                type="text" 
-                                v-model="aiParseText"
-                                placeholder="例如：明天下午兩點到四點跟老闆在會議室開專案啟動會議"
-                                class="flex-grow px-3 py-2 border border-indigo-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                                @keyup.enter="parseTextWithAI"
-                                :disabled="isParsingAI || isSaving"
-                            >
-                            <button 
-                                @click="parseTextWithAI" 
-                                :disabled="isParsingAI || !aiParseText.trim() || isSaving"
-                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 flex items-center shrink-0"
-                            >
+                            <input type="text" v-model="aiParseText" placeholder="例如：明天下午兩點到四點跟老闆開會" class="flex-grow px-3 py-2 border border-indigo-200 rounded-md text-sm outline-none focus:border-indigo-500" @keyup.enter="parseTextWithAI" :disabled="isParsingAI || isSaving">
+                            <button @click="parseTextWithAI" :disabled="isParsingAI || !aiParseText.trim() || isSaving" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 flex items-center shrink-0">
                                 <i v-if="isParsingAI" data-lucide="loader-2" class="w-4 h-4 mr-1 animate-spin"></i>
                                 {{ isParsingAI ? '解析中...' : '解析' }}
                             </button>
                         </div>
-                        <p v-if="aiErrorMsg" class="text-red-500 text-xs mt-1">{{ aiErrorMsg }}</p>
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">活動標題 <span class="text-red-500">*</span></label>
-                        <input 
-                            type="text" 
-                            v-model="currentEvent.title" 
-                            :disabled="modalMode === 'view' || isSaving"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
-                            placeholder="請輸入活動名稱"
-                        >
+                        <input type="text" v-model="currentEvent.title" :disabled="modalMode === 'view' || isSaving" class="w-full px-3 py-2 border border-gray-300 rounded-md outline-none focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500" placeholder="請輸入活動名稱">
                     </div>
                     
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">開始時間</label>
-                            <input 
-                                type="text" 
-                                :value="formatDateDisplay(currentEvent.start)" 
-                                disabled
-                                class="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 text-sm"
-                            >
+                            <input type="text" :value="formatDateDisplay(currentEvent.start)" disabled class="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 text-sm">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">結束時間</label>
-                            <input 
-                                type="text" 
-                                :value="formatDateDisplay(currentEvent.end)" 
-                                disabled
-                                class="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 text-sm"
-                            >
+                            <input type="text" :value="formatDateDisplay(currentEvent.end)" disabled class="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 text-sm">
                         </div>
                     </div>
 
                     <div>
                         <div class="flex justify-between items-end mb-1">
                             <label class="block text-sm font-medium text-gray-700">活動備註</label>
-                            <button 
-                                v-if="modalMode !== 'view'"
-                                @click="polishDescriptionWithAI"
-                                :disabled="isPolishing || !currentEvent.extendedProps.description || isSaving"
-                                class="text-xs text-indigo-600 hover:text-indigo-800 flex items-center disabled:opacity-50 transition-colors bg-indigo-50 px-2 py-1 rounded"
-                                title="讓 AI 幫您潤飾這段備註"
-                            >
-                                <i v-if="isPolishing" data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin"></i>
-                                <span v-else>✨</span> 
-                                {{ isPolishing ? '潤飾中...' : 'AI 潤飾' }}
+                            <button v-if="modalMode !== 'view'" @click="polishDescriptionWithAI" :disabled="isPolishing || !currentEvent.extendedProps.description || isSaving" class="text-xs text-indigo-600 hover:text-indigo-800 flex items-center disabled:opacity-50 transition-colors bg-indigo-50 px-2 py-1 rounded">
+                                <i v-if="isPolishing" data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin"></i><span v-else>✨</span> {{ isPolishing ? '潤飾中...' : 'AI 潤飾' }}
                             </button>
                         </div>
-                        <textarea 
-                            v-model="currentEvent.extendedProps.description" 
-                            :disabled="modalMode === 'view' || isSaving"
-                            rows="3"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
-                            placeholder="輸入更多活動細節..."
-                        ></textarea>
+                        <textarea v-model="currentEvent.extendedProps.description" :disabled="modalMode === 'view' || isSaving" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md outline-none focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500" placeholder="輸入更多活動細節..."></textarea>
                     </div>
 
                     <div class="bg-blue-50 p-3 rounded-lg border border-blue-100 flex items-start mt-4">
@@ -244,33 +229,11 @@
                     </div>
                 </div>
 
-                <!-- Modal 按鈕區 -->
                 <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-end space-x-3">
-                    <button 
-                        v-if="modalMode === 'edit'" 
-                        @click="deleteEvent" 
-                        :disabled="isSaving"
-                        class="px-4 py-2 border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors mr-auto disabled:opacity-50"
-                    >
-                        刪除活動
-                    </button>
-                    
-                    <button 
-                        @click="showModal = false" 
-                        :disabled="isSaving"
-                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium transition-colors disabled:opacity-50"
-                    >
-                        {{ modalMode === 'view' ? '關閉' : '取消' }}
-                    </button>
-                    
-                    <button 
-                        v-if="modalMode !== 'view'" 
-                        @click="saveEvent" 
-                        :disabled="isSaving"
-                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors shadow-sm shadow-blue-200 disabled:opacity-50 flex items-center"
-                    >
-                        <i v-if="isSaving" data-lucide="loader-2" class="w-4 h-4 mr-2 animate-spin"></i>
-                        {{ isSaving ? '儲存中...' : '儲存' }}
+                    <button v-if="modalMode === 'edit'" @click="deleteEvent" :disabled="isSaving" class="px-4 py-2 border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors mr-auto disabled:opacity-50">刪除活動</button>
+                    <button @click="showModal = false" :disabled="isSaving" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium transition-colors disabled:opacity-50">{{ modalMode === 'view' ? '關閉' : '取消' }}</button>
+                    <button v-if="modalMode !== 'view'" @click="saveEvent" :disabled="isSaving" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors shadow-sm shadow-blue-200 disabled:opacity-50 flex items-center">
+                        <i v-if="isSaving" data-lucide="loader-2" class="w-4 h-4 mr-2 animate-spin"></i>{{ isSaving ? '儲存中...' : '儲存' }}
                     </button>
                 </div>
             </div>
@@ -280,29 +243,24 @@
     <script type="module">
         import { createApp, ref, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
         
-        // =========================================================================
-        // ⚠️ 必填設定：請在這裡填寫您的 GitHub 專案資訊 (部署前務必修改)
-        // =========================================================================
-        const GITHUB_USERNAME = 'aaaaaamou'; // 您的 GitHub 帳號 (例如: 'wang')
-        const GITHUB_REPO = 'HuilongGanste-Calender';           // 您的專案名稱 (例如: 'shared-calendar')
-        const GITHUB_FILE_PATH = 'data.json';           // 存放資料的檔案名稱
-        const GITHUB_TOKEN = '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';       // ⚠️ 您的 GitHub Token
-        const GITHUB_BRANCH = 'main';                   // 分支名稱 (通常是 main 或 master)
-        // =========================================================================
-
         createApp({
             setup() {
-                // 狀態管理
+                // =============== 系統設定與狀態 ===============
+                // 從 localStorage 讀取設定
+                const setupApiKey = ref(localStorage.getItem('cal_jsonbin_api_key') || '');
+                const setupBinId = ref(localStorage.getItem('cal_jsonbin_bin_id') || '');
+                const isConfigured = ref(!!(setupApiKey.value && setupBinId.value));
+                
+                const isSettingUp = ref(false);
+                const setupErrorMsg = ref('');
+
                 const currentUser = ref(localStorage.getItem('cal_user') || '');
                 const nameInput = ref('');
                 const calendarEl = ref(null);
                 let calendar = null;
                 
-                // GitHub 狀態
-                const isInitializing = ref(false); 
                 const isLoadingEvents = ref(false); 
                 const isSaving = ref(false); 
-                const currentSha = ref(null); // 用於追蹤 GitHub 檔案版本，避免覆蓋衝突
                 
                 // Modal 狀態
                 const showModal = ref(false);
@@ -312,8 +270,79 @@
                     extendedProps: { creator: '', description: '' }
                 });
 
-                // ================= Gemini API 整合 (保留原功能) =================
-                const apiKey = "";
+                // =============== 自動建立/綁定 JSONBin ===============
+                const setupDatabase = async () => {
+                    if (!setupApiKey.value.trim()) {
+                        setupErrorMsg.value = "請輸入您的 JSONBin API Key";
+                        return;
+                    }
+
+                    isSettingUp.value = true;
+                    setupErrorMsg.value = '';
+
+                    try {
+                        let binId = setupBinId.value.trim();
+                        
+                        // 如果使用者沒有填寫 Bin ID，程式自動幫他建一個空的陣列 []
+                        if (!binId) {
+                            const res = await fetch('https://api.jsonbin.io/v3/b', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-Master-Key': setupApiKey.value.trim(),
+                                    'X-Bin-Name': 'Shared-Calendar-Data' // 自動命名
+                                },
+                                body: JSON.stringify([]) // ✅ 解決 "Bin cannot be blank" 的核心：自動塞入空陣列
+                            });
+
+                            if (!res.ok) {
+                                if (res.status === 401) throw new Error("API Key 無效，請確認您複製的密碼正確。");
+                                throw new Error(`建立失敗 (HTTP ${res.status})`);
+                            }
+
+                            const data = await res.json();
+                            binId = data.metadata.id;
+                            setupBinId.value = binId;
+                        }
+
+                        // 測試讀取一次，確保權限正確
+                        const testRes = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
+                            headers: { 'X-Master-Key': setupApiKey.value.trim(), 'X-Bin-Meta': 'false' }
+                        });
+                        if (!testRes.ok) throw new Error("無法讀取此 Bin ID，請確認 API Key 與 Bin ID 是否匹配。");
+
+                        // 儲存設定到瀏覽器
+                        localStorage.setItem('cal_jsonbin_api_key', setupApiKey.value.trim());
+                        localStorage.setItem('cal_jsonbin_bin_id', binId);
+                        isConfigured.value = true;
+                        
+                        // 初始化圖標
+                        nextTick(initIcons);
+                        
+                        alert(`✅ 資料庫設定成功！\n\n您的專屬 Bin ID：${binId}\n\n如果您想邀請團隊成員，請將「API Key」與「Bin ID」提供給他們填入即可共用同一個日曆！`);
+                    } catch (error) {
+                        setupErrorMsg.value = error.message;
+                    } finally {
+                        isSettingUp.value = false;
+                    }
+                };
+
+                const resetConfig = () => {
+                    if(confirm("確定要清除資料庫設定嗎？這將會登出並需要重新輸入 API Key。")) {
+                        localStorage.removeItem('cal_jsonbin_api_key');
+                        localStorage.removeItem('cal_jsonbin_bin_id');
+                        localStorage.removeItem('cal_user');
+                        setupApiKey.value = '';
+                        setupBinId.value = '';
+                        currentUser.value = '';
+                        isConfigured.value = false;
+                        if(calendar) calendar.destroy();
+                        nextTick(initIcons);
+                    }
+                };
+
+                // =============== Gemini API 整合 (保留原功能) ===============
+                const apiKey = "$2a$10$djJgTt1eG.wVCh.9cxMk3u0hb0KNd93m0rafgJWfWAmZx5abn4aD."; // 系統自動注入
                 const aiParseText = ref('');
                 const isParsingAI = ref(false);
                 const isPolishing = ref(false);
@@ -367,103 +396,56 @@
                     } catch (error) {} finally { isPolishing.value = false; }
                 };
 
-                // ================= GitHub API 讀寫邏輯 =================
-                // 處理 Base64 編碼 (支援中文)
-                const utf8ToBase64 = (str) => btoa(unescape(encodeURIComponent(str)));
-                const base64ToUtf8 = (str) => decodeURIComponent(escape(atob(str)));
-
-                // 從 GitHub 讀取資料
-                const loadFromGitHub = async (isManual = false) => {
-                    if (!GITHUB_TOKEN || GITHUB_TOKEN === 'YOUR_GITHUB_TOKEN') return [];
+                // =============== JSONBin API 讀寫邏輯 ===============
+                const loadFromCloud = async (isManual = false) => {
+                    if (!isConfigured.value) return [];
                     isLoadingEvents.value = true;
                     try {
-                        const url = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}?ref=${GITHUB_BRANCH}&t=${Date.now()}`;
-                        const res = await fetch(url, {
-                            headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json' }
+                        const res = await fetch(`https://api.jsonbin.io/v3/b/${setupBinId.value}/latest`, {
+                            headers: { 
+                                'X-Master-Key': setupApiKey.value,
+                                'X-Bin-Meta': 'false' 
+                            }
                         });
                         
-                        if (res.status === 404) {
-                            isLoadingEvents.value = false;
-                            console.warn("⚠️ GitHub 上尚未建立檔案，將在首次儲存時自動建立。");
-                            return [];
-                        }
-                        if (res.status === 401) throw new Error("Token 驗證失敗，請檢查您的 GitHub Token 是否正確或已過期。");
-                        if (res.status === 403) throw new Error("權限不足，請檢查 Token 是否包含 'Contents: Read and write' 權限。");
                         if (!res.ok) throw new Error(`HTTP 狀態碼: ${res.status}`);
-                        
-                        const data = await res.json();
-                        currentSha.value = data.sha; 
-                        
-                        const contentStr = base64ToUtf8(data.content);
-                        // 處理空檔案的情況
-                        if (!contentStr.trim()) return [];
-                        
-                        const events = JSON.parse(contentStr);
+                        const events = await res.json(); 
                         
                         if (calendar) {
                             calendar.removeAllEvents();
-                            calendar.addEventSource(events);
+                            calendar.addEventSource(Array.isArray(events) ? events : []);
                         }
                         isLoadingEvents.value = false;
-                        if (isManual) alert("✅ 已成功從 GitHub 同步最新資料！");
+                        if (isManual) alert("✅ 已成功同步最新資料！");
                         return events;
                     } catch (error) {
-                        console.error("讀取 GitHub 失敗:", error);
+                        console.error("讀取 JSONBin 失敗:", error);
                         isLoadingEvents.value = false;
-                        if (isManual) alert(`❌ 讀取失敗：\n${error.message}\n\n請檢查 F12 開發者工具的 Console 看詳細錯誤。`);
+                        if (isManual) alert(`❌ 讀取失敗，請檢查網路連線。`);
                         return [];
                     }
                 };
 
-                // 儲存資料到 GitHub
-                const pushToGitHub = async (eventsArray) => {
+                const pushToCloud = async (eventsArray) => {
                     try {
-                        // 1. 先抓取最新 SHA (避免衝突)
-                        const getRes = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}?ref=${GITHUB_BRANCH}&t=${Date.now()}`, {
-                            headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
-                        });
-                        if (getRes.ok) {
-                            const getData = await getRes.json();
-                            currentSha.value = getData.sha;
-                        } else if (getRes.status !== 404) {
-                            // 404 是正常的(代表檔案還不存在)，其他錯誤則拋出
-                            const errorText = await getRes.text();
-                            throw new Error(`取得檔案狀態失敗 (${getRes.status}): ${errorText}`);
-                        }
-
-                        // 2. 寫入檔案
-                        const contentStr = JSON.stringify(eventsArray, null, 2);
-                        const body = {
-                            message: `Update calendar events via App by ${currentUser.value}`,
-                            content: utf8ToBase64(contentStr),
-                            branch: GITHUB_BRANCH
-                        };
-                        if (currentSha.value) body.sha = currentSha.value;
-
-                        const res = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`, {
+                        const res = await fetch(`https://api.jsonbin.io/v3/b/${setupBinId.value}`, {
                             method: 'PUT',
                             headers: { 
-                                'Authorization': `token ${GITHUB_TOKEN}`,
-                                'Content-Type': 'application/json'
+                                'Content-Type': 'application/json',
+                                'X-Master-Key': setupApiKey.value
                             },
-                            body: JSON.stringify(body)
+                            body: JSON.stringify(eventsArray)
                         });
 
-                        if (!res.ok) {
-                            const errorData = await res.json().catch(() => ({ message: '未知錯誤' }));
-                            throw new Error(`寫入失敗 (${res.status}): ${errorData.message}`);
-                        }
-                        
-                        const data = await res.json();
-                        currentSha.value = data.content.sha; 
+                        if (!res.ok) throw new Error(`寫入失敗 (${res.status})`);
                         return true;
                     } catch (error) {
-                        console.error("寫入 GitHub 失敗:", error);
-                        throw error; // 往上拋給 saveEvent 處理
+                        console.error("寫入 JSONBin 失敗:", error);
+                        throw error;
                     }
                 };
 
-                // ================= 工具與日曆管理 =================
+                // =============== 工具與日曆管理 ===============
                 const initIcons = () => { nextTick(() => { if (window.lucide) window.lucide.createIcons(); }); };
 
                 const formatDateDisplay = (dateStr) => {
@@ -478,19 +460,14 @@
                     return `hsl(${Math.abs(hash) % 360}, 70%, 45%)`; 
                 };
 
-                // 登入登出
                 const login = () => {
                     if (nameInput.value.trim()) {
-                        if (GITHUB_TOKEN === 'YOUR_GITHUB_TOKEN') {
-                            alert("⚠️ 請先在程式碼中填寫您的 GitHub 專案資訊與 Token！");
-                            return;
-                        }
                         currentUser.value = nameInput.value.trim();
                         localStorage.setItem('cal_user', currentUser.value);
                         nextTick(() => {
                             initCalendar();
                             initIcons();
-                            loadFromGitHub();
+                            loadFromCloud();
                         });
                     }
                 };
@@ -502,7 +479,7 @@
                     setTimeout(initIcons, 100);
                 };
 
-                // ================= 統一的資料儲存處理 (GitHub 版) =================
+                // =============== 統一的資料儲存處理 ===============
                 const saveEvent = async () => {
                     if (!currentEvent.value.title.trim()) { alert("請輸入活動標題！"); return; }
                     
@@ -527,11 +504,11 @@
                             if (idx > -1) currentEvents[idx] = { id: currentEvent.value.id, ...eventPayload };
                         }
                         
-                        await pushToGitHub(currentEvents);
-                        loadFromGitHub(); // 儲存後重新讀取確保畫面正確
+                        await pushToCloud(currentEvents);
+                        loadFromCloud(); 
                         showModal.value = false;
                     } catch (error) {
-                        alert(`❌ 儲存至 GitHub 失敗！\n\n系統訊息: ${error.message}\n\n可能是 Token 設定錯誤、權限不足，或是多人同時編輯發生衝突。`);
+                        alert(`❌ 儲存失敗！\n\n系統訊息: ${error.message}`);
                     } finally {
                         isSaving.value = false;
                     }
@@ -548,8 +525,8 @@
                             }));
                             
                             currentEvents = currentEvents.filter(e => e.id !== currentEvent.value.id);
-                            await pushToGitHub(currentEvents);
-                            loadFromGitHub();
+                            await pushToCloud(currentEvents);
+                            loadFromCloud();
                             showModal.value = false;
                         } catch (error) {
                             alert("刪除失敗。");
@@ -571,7 +548,7 @@
                         if (idx > -1) {
                             currentEvents[idx].start = info.event.startStr;
                             currentEvents[idx].end = info.event.endStr || info.event.startStr;
-                            await pushToGitHub(currentEvents);
+                            await pushToCloud(currentEvents);
                         }
                     } catch (error) {
                         console.error("更新時間失敗:", error);
@@ -580,7 +557,7 @@
                     }
                 };
 
-                // ================= FullCalendar 初始化 =================
+                // =============== FullCalendar 初始化 ===============
                 const initCalendar = () => {
                     if (!calendarEl.value) return;
                     calendar = new FullCalendar.Calendar(calendarEl.value, {
@@ -630,23 +607,22 @@
                     calendar.render();
                 };
 
-                // ================= 生命週期與初始化 =================
                 onMounted(() => {
                     initIcons();
-                    if (currentUser.value) {
+                    if (isConfigured.value && currentUser.value) {
                         nextTick(() => {
                             initCalendar();
-                            loadFromGitHub(); // 登入後自動從 GitHub 抓取最新資料
+                            loadFromCloud(); 
                         });
                     }
                 });
 
                 return {
+                    isConfigured, setupApiKey, setupBinId, isSettingUp, setupErrorMsg, setupDatabase, resetConfig,
                     currentUser, nameInput, login, logout,
                     calendarEl, showModal, modalMode, currentEvent,
                     saveEvent, deleteEvent, formatDateDisplay,
-                    isInitializing, isLoadingEvents, isSaving, 
-                    loadFromGitHub, // 導出供畫面上的重新整理按鈕使用
+                    isLoadingEvents, isSaving, loadFromCloud, 
                     aiParseText, isParsingAI, isPolishing, aiErrorMsg, parseTextWithAI, polishDescriptionWithAI
                 }
             }
