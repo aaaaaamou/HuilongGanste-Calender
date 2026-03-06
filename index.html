@@ -283,13 +283,10 @@
         // =========================================================================
         // ⚠️ 必填設定：請在這裡填寫您的 GitHub 專案資訊 (部署前務必修改)
         // =========================================================================
-        // const GITHUB_USERNAME = 'YOUR_GITHUB_USERNAME'; // 您的 GitHub 帳號 (例如: 'wang')
-        // const GITHUB_REPO = 'YOUR_REPO_NAME';           // 您的專案名稱 (例如: 'shared-calendar')
-        // const GITHUB_TOKEN = 'YOUR_GITHUB_TOKEN';       // ⚠️ 您的 GitHub Token
-        const GITHUB_USERNAME = 'aaaaaamou'; 
-        const GITHUB_REPO = 'HuilongGanste-Calender';
-        const GITHUB_TOKEN = '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';
+        const GITHUB_USERNAME = 'YOUR_GITHUB_USERNAME'; // 您的 GitHub 帳號 (例如: 'wang')
+        const GITHUB_REPO = 'YOUR_REPO_NAME';           // 您的專案名稱 (例如: 'shared-calendar')
         const GITHUB_FILE_PATH = 'data.json';           // 存放資料的檔案名稱
+        const GITHUB_TOKEN = 'YOUR_GITHUB_TOKEN';       // ⚠️ 您的 GitHub Token
         const GITHUB_BRANCH = 'main';                   // 分支名稱 (通常是 main 或 master)
         // =========================================================================
 
@@ -380,7 +377,6 @@
                     if (!GITHUB_TOKEN || GITHUB_TOKEN === 'YOUR_GITHUB_TOKEN') return [];
                     isLoadingEvents.value = true;
                     try {
-                        // 加入時間戳避免瀏覽器快取
                         const url = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}?ref=${GITHUB_BRANCH}&t=${Date.now()}`;
                         const res = await fetch(url, {
                             headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json' }
@@ -388,14 +384,20 @@
                         
                         if (res.status === 404) {
                             isLoadingEvents.value = false;
-                            return []; // 檔案還不存在
+                            console.warn("⚠️ GitHub 上尚未建立檔案，將在首次儲存時自動建立。");
+                            return [];
                         }
-                        if (!res.ok) throw new Error(`GitHub API Error: ${res.status}`);
+                        if (res.status === 401) throw new Error("Token 驗證失敗，請檢查您的 GitHub Token 是否正確或已過期。");
+                        if (res.status === 403) throw new Error("權限不足，請檢查 Token 是否包含 'Contents: Read and write' 權限。");
+                        if (!res.ok) throw new Error(`HTTP 狀態碼: ${res.status}`);
                         
                         const data = await res.json();
-                        currentSha.value = data.sha; // 記錄當前版本
+                        currentSha.value = data.sha; 
                         
                         const contentStr = base64ToUtf8(data.content);
+                        // 處理空檔案的情況
+                        if (!contentStr.trim()) return [];
+                        
                         const events = JSON.parse(contentStr);
                         
                         if (calendar) {
@@ -403,12 +405,12 @@
                             calendar.addEventSource(events);
                         }
                         isLoadingEvents.value = false;
-                        if (isManual) alert("已同步最新資料！");
+                        if (isManual) alert("✅ 已成功從 GitHub 同步最新資料！");
                         return events;
                     } catch (error) {
                         console.error("讀取 GitHub 失敗:", error);
                         isLoadingEvents.value = false;
-                        if (isManual) alert("同步失敗，請檢查設定與網路。");
+                        if (isManual) alert(`❌ 讀取失敗：\n${error.message}\n\n請檢查 F12 開發者工具的 Console 看詳細錯誤。`);
                         return [];
                     }
                 };
@@ -416,15 +418,20 @@
                 // 儲存資料到 GitHub
                 const pushToGitHub = async (eventsArray) => {
                     try {
-                        // 為了避免衝突，存檔前先抓取最新的 SHA
+                        // 1. 先抓取最新 SHA (避免衝突)
                         const getRes = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}?ref=${GITHUB_BRANCH}&t=${Date.now()}`, {
                             headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
                         });
                         if (getRes.ok) {
                             const getData = await getRes.json();
                             currentSha.value = getData.sha;
+                        } else if (getRes.status !== 404) {
+                            // 404 是正常的(代表檔案還不存在)，其他錯誤則拋出
+                            const errorText = await getRes.text();
+                            throw new Error(`取得檔案狀態失敗 (${getRes.status}): ${errorText}`);
                         }
 
+                        // 2. 寫入檔案
                         const contentStr = JSON.stringify(eventsArray, null, 2);
                         const body = {
                             message: `Update calendar events via App by ${currentUser.value}`,
@@ -442,13 +449,17 @@
                             body: JSON.stringify(body)
                         });
 
-                        if (!res.ok) throw new Error(`GitHub Save Error: ${res.status}`);
+                        if (!res.ok) {
+                            const errorData = await res.json().catch(() => ({ message: '未知錯誤' }));
+                            throw new Error(`寫入失敗 (${res.status}): ${errorData.message}`);
+                        }
+                        
                         const data = await res.json();
-                        currentSha.value = data.content.sha; // 更新本地紀錄的 SHA
+                        currentSha.value = data.content.sha; 
                         return true;
                     } catch (error) {
                         console.error("寫入 GitHub 失敗:", error);
-                        throw error;
+                        throw error; // 往上拋給 saveEvent 處理
                     }
                 };
 
@@ -520,7 +531,7 @@
                         loadFromGitHub(); // 儲存後重新讀取確保畫面正確
                         showModal.value = false;
                     } catch (error) {
-                        alert("儲存至 GitHub 失敗！可能是多人同時編輯發生衝突，請點擊「同步最新」後再試。");
+                        alert(`❌ 儲存至 GitHub 失敗！\n\n系統訊息: ${error.message}\n\n可能是 Token 設定錯誤、權限不足，或是多人同時編輯發生衝突。`);
                     } finally {
                         isSaving.value = false;
                     }
