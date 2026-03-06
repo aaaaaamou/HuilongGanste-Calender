@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>多人共享日曆系統 (Vue 3 + FullCalendar)</title>
     
-    <!-- 引入 Vue 3 -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    
     <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -42,6 +39,10 @@
             cursor: pointer;
             border-radius: 4px;
             padding: 2px 4px;
+            transition: opacity 0.2s;
+        }
+        .fc-event-dragging {
+            opacity: 0.7;
         }
     </style>
 </head>
@@ -50,7 +51,14 @@
         
         <!-- ================= 登入畫面 ================= -->
         <div v-if="!currentUser" class="flex-grow flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-            <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center relative overflow-hidden">
+                <div v-if="isInitializing" class="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10">
+                    <div class="flex flex-col items-center">
+                        <i data-lucide="loader-2" class="w-8 h-8 text-blue-600 animate-spin mb-2"></i>
+                        <span class="text-sm text-gray-600 font-medium">連線至雲端伺服器...</span>
+                    </div>
+                </div>
+
                 <div class="mx-auto bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mb-6">
                     <i data-lucide="calendar-days" class="text-blue-600 w-8 h-8"></i>
                 </div>
@@ -67,7 +75,8 @@
                     >
                     <button 
                         type="submit" 
-                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-blue-200"
+                        :disabled="isInitializing"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-blue-200 disabled:opacity-50"
                     >
                         進入日曆
                     </button>
@@ -76,14 +85,26 @@
         </div>
 
         <!-- ================= 主日曆畫面 ================= -->
-        <div v-else class="flex-grow flex flex-col h-full">
+        <div v-else class="flex-grow flex flex-col h-full relative">
+            
+            <!-- 雲端同步狀態提示 -->
+            <div v-if="!isDbConnected" class="absolute top-0 left-0 right-0 bg-amber-100 text-amber-800 text-xs text-center py-1 z-50 flex justify-center items-center">
+                <i data-lucide="wifi-off" class="w-3 h-3 mr-1"></i> 雲端連線中斷或尚未連線，您目前可能看到的是舊資料。
+            </div>
+
             <!-- 頂部導覽列 -->
-            <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0">
+            <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0 mt-[1px]">
                 <div class="flex items-center space-x-3">
                     <div class="bg-blue-600 w-8 h-8 rounded text-white flex items-center justify-center font-bold">
                         C
                     </div>
-                    <h1 class="text-xl font-bold text-gray-800">團隊共用日曆</h1>
+                    <h1 class="text-xl font-bold text-gray-800 flex items-center">
+                        團隊共用日曆
+                        <span class="ml-3 flex items-center text-[10px] bg-green-50 text-green-600 px-2 py-0.5 rounded-full border border-green-200">
+                            <span class="w-1.5 h-1.5 rounded-full bg-green-500 mr-1 animate-pulse"></span>
+                            雲端同步中
+                        </span>
+                    </h1>
                 </div>
                 <div class="flex items-center space-x-4">
                     <div class="flex items-center text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
@@ -98,7 +119,10 @@
 
             <!-- 日曆容器 -->
             <main class="flex-grow p-6 overflow-auto">
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full min-h-[600px]">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full min-h-[600px] relative">
+                    <div v-show="isLoadingEvents" class="absolute inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
+                        <i data-lucide="loader-2" class="w-8 h-8 text-blue-500 animate-spin"></i>
+                    </div>
                     <!-- Vue 的 ref 用於綁定 FullCalendar -->
                     <div ref="calendarEl" class="h-full"></div>
                 </div>
@@ -116,7 +140,7 @@
                         <i v-else data-lucide="eye" class="w-5 h-5 mr-2 text-gray-500"></i>
                         {{ modalMode === 'add' ? '新增活動' : modalMode === 'edit' ? '編輯活動' : '活動詳情' }}
                     </h2>
-                    <button @click="showModal = false" class="text-gray-400 hover:text-gray-600">
+                    <button @click="showModal = false" :disabled="isSaving" class="text-gray-400 hover:text-gray-600 disabled:opacity-50">
                         <i data-lucide="x" class="w-5 h-5"></i>
                     </button>
                 </div>
@@ -137,11 +161,11 @@
                                 placeholder="例如：明天下午兩點到四點跟老闆在會議室開專案啟動會議"
                                 class="flex-grow px-3 py-2 border border-indigo-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                                 @keyup.enter="parseTextWithAI"
-                                :disabled="isParsingAI"
+                                :disabled="isParsingAI || isSaving"
                             >
                             <button 
                                 @click="parseTextWithAI" 
-                                :disabled="isParsingAI || !aiParseText.trim()"
+                                :disabled="isParsingAI || !aiParseText.trim() || isSaving"
                                 class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 flex items-center shrink-0"
                             >
                                 <i v-if="isParsingAI" data-lucide="loader-2" class="w-4 h-4 mr-1 animate-spin"></i>
@@ -156,7 +180,7 @@
                         <input 
                             type="text" 
                             v-model="currentEvent.title" 
-                            :disabled="modalMode === 'view'"
+                            :disabled="modalMode === 'view' || isSaving"
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
                             placeholder="請輸入活動名稱"
                         >
@@ -189,7 +213,7 @@
                             <button 
                                 v-if="modalMode !== 'view'"
                                 @click="polishDescriptionWithAI"
-                                :disabled="isPolishing || !currentEvent.extendedProps.description"
+                                :disabled="isPolishing || !currentEvent.extendedProps.description || isSaving"
                                 class="text-xs text-indigo-600 hover:text-indigo-800 flex items-center disabled:opacity-50 transition-colors bg-indigo-50 px-2 py-1 rounded"
                                 title="讓 AI 幫您潤飾這段備註"
                             >
@@ -200,7 +224,7 @@
                         </div>
                         <textarea 
                             v-model="currentEvent.extendedProps.description" 
-                            :disabled="modalMode === 'view'"
+                            :disabled="modalMode === 'view' || isSaving"
                             rows="3"
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
                             placeholder="輸入更多活動細節..."
@@ -221,14 +245,16 @@
                     <button 
                         v-if="modalMode === 'edit'" 
                         @click="deleteEvent" 
-                        class="px-4 py-2 border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors mr-auto"
+                        :disabled="isSaving"
+                        class="px-4 py-2 border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors mr-auto disabled:opacity-50"
                     >
                         刪除活動
                     </button>
                     
                     <button 
                         @click="showModal = false" 
-                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium transition-colors"
+                        :disabled="isSaving"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium transition-colors disabled:opacity-50"
                     >
                         {{ modalMode === 'view' ? '關閉' : '取消' }}
                     </button>
@@ -236,17 +262,39 @@
                     <button 
                         v-if="modalMode !== 'view'" 
                         @click="saveEvent" 
-                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors shadow-sm shadow-blue-200"
+                        :disabled="isSaving"
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors shadow-sm shadow-blue-200 disabled:opacity-50 flex items-center"
                     >
-                        儲存
+                        <i v-if="isSaving" data-lucide="loader-2" class="w-4 h-4 mr-2 animate-spin"></i>
+                        {{ isSaving ? '儲存中...' : '儲存' }}
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script>
-        const { createApp, ref, onMounted, nextTick } = Vue;
+    <!-- Vue 與 Firebase 模組化引入 -->
+    <script type="module">
+        import { createApp, ref, onMounted, nextTick } from 'https://unpkg.com/vue@3/dist/vue.esm-browser.js';
+        
+        // 引入 Firebase 雲端模組
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        // 1. 初始化 Firebase (全域設定)
+        let app, auth, db, appId, eventsColRef;
+        try {
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            // 公開共享資料庫路徑 (所有人共用)
+            eventsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'events');
+        } catch (error) {
+            console.error("Firebase 初始化失敗:", error);
+        }
 
         createApp({
             setup() {
@@ -255,6 +303,14 @@
                 const nameInput = ref('');
                 const calendarEl = ref(null);
                 let calendar = null;
+                
+                // 雲端與載入狀態
+                const fbUser = ref(null); // Firebase 認證使用者
+                const isInitializing = ref(true); // 是否正在連線雲端
+                const isDbConnected = ref(false); // 雲端是否成功連線
+                const isLoadingEvents = ref(false); // 日曆資料載入中
+                const isSaving = ref(false); // 活動儲存中
+                let unsubscribeSnapshot = null; // 註銷監聽器
                 
                 // Modal 狀態
                 const showModal = ref(false);
@@ -271,7 +327,6 @@
                 const isPolishing = ref(false);
                 const aiErrorMsg = ref('');
 
-                // 呼叫 Gemini API 的通用函式 (包含 Exponential Backoff 機制)
                 const callGemini = async (prompt, expectJson = false, systemInstruction = "") => {
                     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
                     const payload = {
@@ -308,29 +363,23 @@
                     throw lastError;
                 };
 
-                // AI 智能解析對話為活動細節
                 const parseTextWithAI = async () => {
                     if (!aiParseText.value.trim() || isParsingAI.value) return;
                     isParsingAI.value = true;
                     aiErrorMsg.value = '';
                     try {
                         const today = new Date().toISOString();
-                        const selectedDate = currentEvent.value.start; // 使用者點擊的日期
+                        const selectedDate = currentEvent.value.start; 
                         const prompt = `
-                            請從以下文本中提取活動細節。
-                            現在時間是：${today}
-                            使用者目前在日曆上點擊的基準日期是：${selectedDate}
-                            
+                            請從以下文本中提取活動細節。現在時間是：${today}。使用者點擊的基準日期是：${selectedDate}
                             文本："${aiParseText.value}"
-                            
-                            請回傳 JSON 格式，必須包含以下 key:
-                            - "title" (字串): 活動標題，如果沒有提到請推測一個精簡的標題
-                            - "start" (字串): 開始時間 (ISO 8601 格式 YYYY-MM-DDTHH:mm:00)。如果文本沒有提到具體日期，請預設使用基準日期(${selectedDate})加上文本提到的時間。如果連時間都沒有，請預設為基準日期的早上 10:00。
-                            - "end" (字串): 結束時間 (ISO 8601 格式 YYYY-MM-DDTHH:mm:00)。如果沒提到，請預設為開始時間加 1 小時。
-                            - "description" (字串): 提取出的其他細節或備註。
+                            請回傳 JSON 格式，必須包含 key:
+                            - "title" (字串): 標題推測
+                            - "start" (字串): ISO 8601。若無具體日期用基準日期+時間。若無時間預設 10:00。
+                            - "end" (字串): ISO 8601。預設開始後1小時。
+                            - "description" (字串): 備註。
                         `;
-                        const systemInstruction = "你是一個幫助使用者從自然語言對話中提取日曆活動參數的得力助手。請嚴格輸出 JSON 格式。";
-                        
+                        const systemInstruction = "你是一個幫助使用者從自然語言對話中提取日曆活動參數的得力助手。嚴格輸出 JSON。";
                         const result = await callGemini(prompt, true, systemInstruction);
                         
                         if (result.title) currentEvent.value.title = result.title;
@@ -338,67 +387,38 @@
                         if (result.end) currentEvent.value.end = result.end;
                         if (result.description) currentEvent.value.extendedProps.description = result.description;
                         
-                        aiParseText.value = ''; // 清空輸入框
+                        aiParseText.value = ''; 
                         nextTick(initIcons);
                     } catch (error) {
-                        console.error("AI 解析失敗:", error);
-                        aiErrorMsg.value = "AI 解析失敗，請稍後再試或手動輸入。";
+                        aiErrorMsg.value = "AI 解析失敗，請稍後再試。";
                         setTimeout(() => aiErrorMsg.value = '', 4000);
                     } finally {
                         isParsingAI.value = false;
                     }
                 };
 
-                // AI 潤飾備註
                 const polishDescriptionWithAI = async () => {
                     if (!currentEvent.value.extendedProps.description || isPolishing.value) return;
                     isPolishing.value = true;
-                    aiErrorMsg.value = '';
                     try {
-                        const prompt = `請將以下活動備註進行潤飾，使其語氣更專業、結構更清晰。可以直接輸出潤飾後的結果，不要包含任何開場白或說明：\n\n"${currentEvent.value.extendedProps.description}"`;
-                        const systemInstruction = "你是一位專業的秘書與文案編輯。";
-                        const result = await callGemini(prompt, false, systemInstruction);
-                        if (result) {
-                            currentEvent.value.extendedProps.description = result.trim();
-                        }
+                        const prompt = `請將以下活動備註潤飾使其語氣更專業。直接輸出潤飾後結果：\n\n"${currentEvent.value.extendedProps.description}"`;
+                        const result = await callGemini(prompt, false, "你是專業的秘書。");
+                        if (result) currentEvent.value.extendedProps.description = result.trim();
                     } catch (error) {
                         console.error("AI 潤飾失敗:", error);
-                        aiErrorMsg.value = "AI 潤飾失敗，請稍後再試。";
-                        setTimeout(() => aiErrorMsg.value = '', 4000);
                     } finally {
                         isPolishing.value = false;
                     }
                 };
                 // ===================================================
 
-                // 初始化 Lucide Icons
+                // 工具函式
                 const initIcons = () => {
                     nextTick(() => {
                         if (window.lucide) window.lucide.createIcons();
                     });
                 };
 
-                // 登入邏輯
-                const login = () => {
-                    if (nameInput.value.trim()) {
-                        currentUser.value = nameInput.value.trim();
-                        localStorage.setItem('cal_user', currentUser.value);
-                        nextTick(() => {
-                            initCalendar();
-                            initIcons();
-                        });
-                    }
-                };
-
-                // 登出邏輯
-                const logout = () => {
-                    currentUser.value = '';
-                    localStorage.removeItem('cal_user');
-                    if (calendar) calendar.destroy();
-                    setTimeout(initIcons, 100);
-                };
-
-                // 格式化日期顯示
                 const formatDateDisplay = (dateStr) => {
                     if (!dateStr) return '';
                     const d = new Date(dateStr);
@@ -408,25 +428,167 @@
                     });
                 };
 
-                // ================= 資料庫模擬 (使用 LocalStorage) =================
-                const loadEventsFromDB = () => {
-                    return JSON.parse(localStorage.getItem('cal_events') || '[]');
-                };
-
-                const saveEventsToDB = (eventsArray) => {
-                    localStorage.setItem('cal_events', JSON.stringify(eventsArray));
-                    // 觸發自定義事件，讓同頁面也能感知 (雖然 Vue 自身有 reactivity，但此處配合 FullCalendar 架構)
-                    window.dispatchEvent(new Event('local-events-updated'));
-                };
-
-                // 產生獨一無二的顏色給不同的使用者
                 const getColorForUser = (username) => {
                     let hash = 0;
                     for (let i = 0; i < username.length; i++) {
                         hash = username.charCodeAt(i) + ((hash << 5) - hash);
                     }
                     const h = Math.abs(hash) % 360;
-                    return `hsl(${h}, 70%, 45%)`; // 產生一個帶有該名字特徵的顏色
+                    return `hsl(${h}, 70%, 45%)`; 
+                };
+
+                // 登入邏輯
+                const login = () => {
+                    if (nameInput.value.trim() && !isInitializing.value) {
+                        currentUser.value = nameInput.value.trim();
+                        localStorage.setItem('cal_user', currentUser.value);
+                        nextTick(() => {
+                            initCalendar();
+                            initIcons();
+                            if (fbUser.value) subscribeToFirestore(); // 確定身份後開始監聽雲端資料
+                        });
+                    }
+                };
+
+                const logout = () => {
+                    currentUser.value = '';
+                    localStorage.removeItem('cal_user');
+                    if (calendar) calendar.destroy();
+                    if (unsubscribeSnapshot) {
+                        unsubscribeSnapshot();
+                        unsubscribeSnapshot = null;
+                    }
+                    setTimeout(initIcons, 100);
+                };
+
+                // ================= Firestore 雲端同步核心邏輯 =================
+                // 認證初始化 (強制在所有資料庫操作前執行)
+                const initAuth = async () => {
+                    if (!auth) {
+                        isInitializing.value = false;
+                        return;
+                    }
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase 登入失敗:", error);
+                        isInitializing.value = false;
+                    }
+                };
+
+                // 訂閱雲端資料庫更新 (即時同步)
+                const subscribeToFirestore = () => {
+                    if (!fbUser.value || !eventsColRef) return;
+                    
+                    isLoadingEvents.value = true;
+                    isDbConnected.value = true;
+                    
+                    if (unsubscribeSnapshot) unsubscribeSnapshot();
+
+                    unsubscribeSnapshot = onSnapshot(eventsColRef, 
+                        (snapshot) => {
+                            const eventsData = [];
+                            snapshot.forEach(docSnap => {
+                                eventsData.push({ id: docSnap.id, ...docSnap.data() });
+                            });
+                            
+                            // 更新到 FullCalendar 畫面
+                            if (calendar) {
+                                calendar.removeAllEvents();
+                                calendar.addEventSource(eventsData);
+                            }
+                            isLoadingEvents.value = false;
+                        }, 
+                        (error) => {
+                            console.error("雲端連線或讀取失敗:", error);
+                            isDbConnected.value = false;
+                            isLoadingEvents.value = false;
+                        }
+                    );
+                };
+
+                // 雲端儲存事件 (新增/編輯)
+                const saveEvent = async () => {
+                    if (!currentEvent.value.title.trim()) {
+                        alert("請輸入活動標題！");
+                        return;
+                    }
+                    if (!fbUser.value) {
+                        alert("尚未成功連線至雲端，無法儲存！");
+                        return;
+                    }
+
+                    isSaving.value = true;
+                    
+                    // 準備要送往雲端的乾淨資料結構
+                    const eventPayload = {
+                        title: currentEvent.value.title,
+                        start: currentEvent.value.start,
+                        end: currentEvent.value.end,
+                        backgroundColor: currentEvent.value.backgroundColor,
+                        borderColor: currentEvent.value.borderColor,
+                        extendedProps: {
+                            creator: currentEvent.value.extendedProps.creator,
+                            description: currentEvent.value.extendedProps.description
+                        }
+                    };
+
+                    try {
+                        if (modalMode.value === 'add') {
+                            // Firestore 自動產生 ID
+                            await addDoc(eventsColRef, eventPayload);
+                        } else if (modalMode.value === 'edit') {
+                            // 更新現有 ID 的文件
+                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', currentEvent.value.id);
+                            await updateDoc(docRef, eventPayload);
+                        }
+                        showModal.value = false;
+                    } catch (error) {
+                        console.error("雲端儲存失敗:", error);
+                        alert("儲存失敗，請檢查網路連線。");
+                    } finally {
+                        isSaving.value = false;
+                    }
+                };
+
+                // 雲端刪除事件
+                const deleteEvent = async () => {
+                    if (!fbUser.value) return;
+                    if(confirm('確定要刪除這個活動嗎？')) {
+                        isSaving.value = true;
+                        try {
+                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', currentEvent.value.id);
+                            await deleteDoc(docRef);
+                            showModal.value = false;
+                        } catch (error) {
+                            console.error("刪除失敗:", error);
+                            alert("刪除失敗。");
+                        } finally {
+                            isSaving.value = false;
+                        }
+                    }
+                };
+
+                // 拖曳與調整時間的雲端更新
+                const updateEventTimeOnCloud = async (info) => {
+                    if (!fbUser.value) {
+                        info.revert(); // 退回原位
+                        return;
+                    }
+                    try {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'events', info.event.id);
+                        await updateDoc(docRef, {
+                            start: info.event.startStr,
+                            end: info.event.endStr || info.event.startStr
+                        });
+                    } catch (error) {
+                        console.error("更新時間失敗:", error);
+                        info.revert(); // 若雲端更新失敗，退回原位
+                    }
                 };
 
                 // ================= FullCalendar 初始化 =================
@@ -441,15 +603,14 @@
                             center: 'title',
                             right: 'dayGridMonth,timeGridWeek'
                         },
-                        events: loadEventsFromDB(), // 初始載入資料
+                        events: [], // 資料改由 Firestore 監聽器動態推入
                         selectable: true,
-                        editable: true, // 允許拖曳
+                        editable: true, 
                         height: '100%',
                         
-                        // 1. 點擊空白日期：新增活動
                         select: (info) => {
                             currentEvent.value = {
-                                id: Date.now().toString(),
+                                id: '',
                                 title: '',
                                 start: info.startStr,
                                 end: info.endStr || info.startStr,
@@ -465,7 +626,6 @@
                             initIcons();
                         },
                         
-                        // 2. 點擊已有活動：檢視或編輯
                         eventClick: (info) => {
                             const evt = info.event;
                             const isCreator = evt.extendedProps.creator === currentUser.value;
@@ -488,14 +648,13 @@
                             initIcons();
                         },
 
-                        // 3. 拖曳活動 (變更時間)
                         eventDrop: (info) => {
                             if (info.event.extendedProps.creator !== currentUser.value) {
                                 alert('系統提示：您只能移動自己建立的活動喔！');
                                 info.revert();
                                 return;
                             }
-                            updateEventTime(info.event);
+                            updateEventTimeOnCloud(info);
                         },
                         eventResize: (info) => {
                             if (info.event.extendedProps.creator !== currentUser.value) {
@@ -503,91 +662,46 @@
                                 info.revert();
                                 return;
                             }
-                            updateEventTime(info.event);
+                            updateEventTimeOnCloud(info);
                         }
                     });
                     
                     calendar.render();
                 };
 
-                // 拖曳後更新時間邏輯
-                const updateEventTime = (eventObj) => {
-                    const events = loadEventsFromDB();
-                    const idx = events.findIndex(e => e.id === eventObj.id);
-                    if (idx > -1) {
-                        events[idx].start = eventObj.startStr;
-                        events[idx].end = eventObj.endStr || eventObj.startStr;
-                        saveEventsToDB(events);
-                    }
-                };
-
-                // ================= Modal 操作邏輯 =================
-                const saveEvent = () => {
-                    if (!currentEvent.value.title.trim()) {
-                        alert("請輸入活動標題！");
-                        return;
-                    }
-
-                    const events = loadEventsFromDB();
-                    
-                    if (modalMode.value === 'add') {
-                        events.push({ ...currentEvent.value });
-                    } else if (modalMode.value === 'edit') {
-                        const idx = events.findIndex(e => e.id === currentEvent.value.id);
-                        if (idx > -1) {
-                            events[idx] = { ...currentEvent.value };
-                        }
-                    }
-                    
-                    saveEventsToDB(events);
-                    showModal.value = false;
-                };
-
-                const deleteEvent = () => {
-                    if(confirm('確定要刪除這個活動嗎？')) {
-                        const events = loadEventsFromDB();
-                        const newEvents = events.filter(e => e.id !== currentEvent.value.id);
-                        saveEventsToDB(newEvents);
-                        showModal.value = false;
-                    }
-                };
-
-                // ================= 即時同步邏輯 =================
-                // 刷新日曆畫面資料
-                const refreshCalendarData = () => {
-                    if (calendar) {
-                        const newEvents = loadEventsFromDB();
-                        calendar.removeAllEvents();
-                        calendar.addEventSource(newEvents);
-                    }
-                };
-
+                // ================= 生命週期與初始化 =================
                 onMounted(() => {
                     initIcons();
+                    
+                    // 執行 Firebase 登入流程
+                    if (auth) {
+                        initAuth();
+                        // 監聽登入狀態
+                        onAuthStateChanged(auth, (user) => {
+                            fbUser.value = user;
+                            isInitializing.value = false;
+                            
+                            // 若使用者已在本機設定過名稱，且 Firebase 驗證通過，自動開始同步資料
+                            if (user && currentUser.value) {
+                                subscribeToFirestore();
+                            }
+                        });
+                    } else {
+                        isInitializing.value = false;
+                    }
+
                     if (currentUser.value) {
                         nextTick(() => {
                             initCalendar();
                         });
                     }
-
-                    // 1. 監聽同瀏覽器「其他分頁」的變更 (完美模擬 WebSocket 多人即時更新！)
-                    window.addEventListener('storage', (e) => {
-                        if (e.key === 'cal_events') {
-                            refreshCalendarData();
-                        }
-                    });
-
-                    // 2. 監聽「本頁面」的變更
-                    window.addEventListener('local-events-updated', () => {
-                        refreshCalendarData();
-                    });
                 });
 
                 return {
                     currentUser, nameInput, login, logout,
                     calendarEl, showModal, modalMode, currentEvent,
                     saveEvent, deleteEvent, formatDateDisplay,
-                    // 導出 Gemini API 相關變數與方法給模板使用
+                    isInitializing, isDbConnected, isLoadingEvents, isSaving,
                     aiParseText, isParsingAI, isPolishing, aiErrorMsg, 
                     parseTextWithAI, polishDescriptionWithAI
                 }
