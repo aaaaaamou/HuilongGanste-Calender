@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多人共享日曆系統 (Vue 3 + FullCalendar)</title>
+    
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 FullCalendar 核心與語系 -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+    <script src='https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.11/locales-all.global.min.js'></script>
+
+    <!-- 引入 Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* 微調 FullCalendar 的樣式使其融入 Tailwind */
+        .fc-theme-standard td, .fc-theme-standard th {
+            border-color: #e5e7eb;
+        }
+        .fc-header-toolbar {
+            margin-bottom: 1.5rem !important;
+        }
+        .fc-button-primary {
+            background-color: #3b82f6 !important;
+            border-color: #3b82f6 !important;
+            text-transform: capitalize !important;
+        }
+        .fc-button-primary:hover {
+            background-color: #2563eb !important;
+            border-color: #2563eb !important;
+        }
+        .fc-button-active {
+            background-color: #1d4ed8 !important;
+        }
+        .fc-event {
+            cursor: pointer;
+            border-radius: 4px;
+            padding: 2px 4px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen overflow-hidden font-sans">
+    <div id="app" class="h-full flex flex-col">
+        
+        <!-- ================= 登入畫面 ================= -->
+        <div v-if="!currentUser" class="flex-grow flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+            <div class="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+                <div class="mx-auto bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mb-6">
+                    <i data-lucide="calendar-days" class="text-blue-600 w-8 h-8"></i>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-800 mb-2">共享日曆系統</h1>
+                <p class="text-gray-500 mb-8">請輸入您的姓名或 Email 以進入工作區</p>
+                
+                <form @submit.prevent="login" class="space-y-4">
+                    <input 
+                        v-model="nameInput" 
+                        type="text" 
+                        required
+                        placeholder="例如：王小明 或 ming@example.com" 
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                    >
+                    <button 
+                        type="submit" 
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg shadow-blue-200"
+                    >
+                        進入日曆
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- ================= 主日曆畫面 ================= -->
+        <div v-else class="flex-grow flex flex-col h-full">
+            <!-- 頂部導覽列 -->
+            <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0">
+                <div class="flex items-center space-x-3">
+                    <div class="bg-blue-600 w-8 h-8 rounded text-white flex items-center justify-center font-bold">
+                        C
+                    </div>
+                    <h1 class="text-xl font-bold text-gray-800">團隊共用日曆</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded-full">
+                        <i data-lucide="user" class="w-4 h-4 mr-2"></i>
+                        目前身分：<span class="font-semibold text-gray-800 ml-1">{{ currentUser }}</span>
+                    </div>
+                    <button @click="logout" class="text-gray-500 hover:text-red-600 transition-colors p-2" title="登出">
+                        <i data-lucide="log-out" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- 日曆容器 -->
+            <main class="flex-grow p-6 overflow-auto">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full min-h-[600px]">
+                    <!-- Vue 的 ref 用於綁定 FullCalendar -->
+                    <div ref="calendarEl" class="h-full"></div>
+                </div>
+            </main>
+        </div>
+
+        <!-- ================= 活動編輯/新增 Modal ================= -->
+        <div v-if="showModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-opacity">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+                <!-- Modal 標題 -->
+                <div class="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                    <h2 class="text-lg font-bold text-gray-800 flex items-center">
+                        <i v-if="modalMode === 'add'" data-lucide="calendar-plus" class="w-5 h-5 mr-2 text-blue-600"></i>
+                        <i v-else-if="modalMode === 'edit'" data-lucide="edit" class="w-5 h-5 mr-2 text-amber-500"></i>
+                        <i v-else data-lucide="eye" class="w-5 h-5 mr-2 text-gray-500"></i>
+                        {{ modalMode === 'add' ? '新增活動' : modalMode === 'edit' ? '編輯活動' : '活動詳情' }}
+                    </h2>
+                    <button @click="showModal = false" class="text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                
+                <!-- Modal 內容 -->
+                <div class="p-6 overflow-y-auto flex-grow space-y-4">
+                    
+                    <!-- ✨ AI 智能解析區塊 (僅在新增時顯示) -->
+                    <div v-if="modalMode === 'add'" class="bg-indigo-50 border border-indigo-100 rounded-lg p-4 mb-2">
+                        <label class="block text-sm font-bold text-indigo-800 mb-2 flex items-center">
+                            <span>✨ AI 智能建立</span>
+                            <span class="text-xs font-normal text-indigo-600 ml-2">貼上對話或信件，讓 AI 自動解析</span>
+                        </label>
+                        <div class="flex space-x-2">
+                            <input 
+                                type="text" 
+                                v-model="aiParseText"
+                                placeholder="例如：明天下午兩點到四點跟老闆在會議室開專案啟動會議"
+                                class="flex-grow px-3 py-2 border border-indigo-200 rounded-md focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                                @keyup.enter="parseTextWithAI"
+                                :disabled="isParsingAI"
+                            >
+                            <button 
+                                @click="parseTextWithAI" 
+                                :disabled="isParsingAI || !aiParseText.trim()"
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 flex items-center shrink-0"
+                            >
+                                <i v-if="isParsingAI" data-lucide="loader-2" class="w-4 h-4 mr-1 animate-spin"></i>
+                                {{ isParsingAI ? '解析中...' : '解析' }}
+                            </button>
+                        </div>
+                        <p v-if="aiErrorMsg" class="text-red-500 text-xs mt-1">{{ aiErrorMsg }}</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">活動標題 <span class="text-red-500">*</span></label>
+                        <input 
+                            type="text" 
+                            v-model="currentEvent.title" 
+                            :disabled="modalMode === 'view'"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
+                            placeholder="請輸入活動名稱"
+                        >
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">開始時間</label>
+                            <input 
+                                type="text" 
+                                :value="formatDateDisplay(currentEvent.start)" 
+                                disabled
+                                class="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 text-sm"
+                            >
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">結束時間</label>
+                            <input 
+                                type="text" 
+                                :value="formatDateDisplay(currentEvent.end)" 
+                                disabled
+                                class="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-600 text-sm"
+                            >
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between items-end mb-1">
+                            <label class="block text-sm font-medium text-gray-700">活動備註</label>
+                            <button 
+                                v-if="modalMode !== 'view'"
+                                @click="polishDescriptionWithAI"
+                                :disabled="isPolishing || !currentEvent.extendedProps.description"
+                                class="text-xs text-indigo-600 hover:text-indigo-800 flex items-center disabled:opacity-50 transition-colors bg-indigo-50 px-2 py-1 rounded"
+                                title="讓 AI 幫您潤飾這段備註"
+                            >
+                                <i v-if="isPolishing" data-lucide="loader-2" class="w-3 h-3 mr-1 animate-spin"></i>
+                                <span v-else>✨</span> 
+                                {{ isPolishing ? '潤飾中...' : 'AI 潤飾' }}
+                            </button>
+                        </div>
+                        <textarea 
+                            v-model="currentEvent.extendedProps.description" 
+                            :disabled="modalMode === 'view'"
+                            rows="3"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
+                            placeholder="輸入更多活動細節..."
+                        ></textarea>
+                    </div>
+
+                    <div class="bg-blue-50 p-3 rounded-lg border border-blue-100 flex items-start mt-4">
+                        <i data-lucide="info" class="w-4 h-4 text-blue-500 mt-0.5 mr-2 shrink-0"></i>
+                        <div class="text-sm text-blue-800">
+                            發起人：<span class="font-bold">{{ currentEvent.extendedProps.creator }}</span>
+                            <span v-if="modalMode === 'view'" class="block text-blue-600 text-xs mt-1">您只能檢視此活動，因為您不是發起人。</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal 按鈕區 -->
+                <div class="bg-gray-50 px-6 py-4 border-t border-gray-100 flex justify-end space-x-3">
+                    <button 
+                        v-if="modalMode === 'edit'" 
+                        @click="deleteEvent" 
+                        class="px-4 py-2 border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors mr-auto"
+                    >
+                        刪除活動
+                    </button>
+                    
+                    <button 
+                        @click="showModal = false" 
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 font-medium transition-colors"
+                    >
+                        {{ modalMode === 'view' ? '關閉' : '取消' }}
+                    </button>
+                    
+                    <button 
+                        v-if="modalMode !== 'view'" 
+                        @click="saveEvent" 
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors shadow-sm shadow-blue-200"
+                    >
+                        儲存
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                // 狀態管理
+                const currentUser = ref(localStorage.getItem('cal_user') || '');
+                const nameInput = ref('');
+                const calendarEl = ref(null);
+                let calendar = null;
+                
+                // Modal 狀態
+                const showModal = ref(false);
+                const modalMode = ref('add'); // 'add', 'edit', 'view'
+                const currentEvent = ref({
+                    id: '', title: '', start: '', end: '', 
+                    extendedProps: { creator: '', description: '' }
+                });
+
+                // ================= Gemini API 整合 =================
+                const apiKey = "";
+                const aiParseText = ref('');
+                const isParsingAI = ref(false);
+                const isPolishing = ref(false);
+                const aiErrorMsg = ref('');
+
+                // 呼叫 Gemini API 的通用函式 (包含 Exponential Backoff 機制)
+                const callGemini = async (prompt, expectJson = false, systemInstruction = "") => {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                    const payload = {
+                        contents: [{ parts: [{ text: prompt }] }]
+                    };
+                    if (systemInstruction) {
+                        payload.systemInstruction = { parts: [{ text: systemInstruction }] };
+                    }
+                    if (expectJson) {
+                        payload.generationConfig = { responseMimeType: "application/json" };
+                    }
+
+                    const delays = [1000, 2000, 4000, 8000, 16000];
+                    let lastError;
+                    
+                    for (let i = 0; i < delays.length + 1; i++) {
+                        try {
+                            const response = await fetch(url, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(payload)
+                            });
+                            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                            const data = await response.json();
+                            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                            return expectJson ? JSON.parse(text) : text;
+                        } catch (e) {
+                            lastError = e;
+                            if (i < delays.length) {
+                                await new Promise(res => setTimeout(res, delays[i]));
+                            }
+                        }
+                    }
+                    throw lastError;
+                };
+
+                // AI 智能解析對話為活動細節
+                const parseTextWithAI = async () => {
+                    if (!aiParseText.value.trim() || isParsingAI.value) return;
+                    isParsingAI.value = true;
+                    aiErrorMsg.value = '';
+                    try {
+                        const today = new Date().toISOString();
+                        const selectedDate = currentEvent.value.start; // 使用者點擊的日期
+                        const prompt = `
+                            請從以下文本中提取活動細節。
+                            現在時間是：${today}
+                            使用者目前在日曆上點擊的基準日期是：${selectedDate}
+                            
+                            文本："${aiParseText.value}"
+                            
+                            請回傳 JSON 格式，必須包含以下 key:
+                            - "title" (字串): 活動標題，如果沒有提到請推測一個精簡的標題
+                            - "start" (字串): 開始時間 (ISO 8601 格式 YYYY-MM-DDTHH:mm:00)。如果文本沒有提到具體日期，請預設使用基準日期(${selectedDate})加上文本提到的時間。如果連時間都沒有，請預設為基準日期的早上 10:00。
+                            - "end" (字串): 結束時間 (ISO 8601 格式 YYYY-MM-DDTHH:mm:00)。如果沒提到，請預設為開始時間加 1 小時。
+                            - "description" (字串): 提取出的其他細節或備註。
+                        `;
+                        const systemInstruction = "你是一個幫助使用者從自然語言對話中提取日曆活動參數的得力助手。請嚴格輸出 JSON 格式。";
+                        
+                        const result = await callGemini(prompt, true, systemInstruction);
+                        
+                        if (result.title) currentEvent.value.title = result.title;
+                        if (result.start) currentEvent.value.start = result.start;
+                        if (result.end) currentEvent.value.end = result.end;
+                        if (result.description) currentEvent.value.extendedProps.description = result.description;
+                        
+                        aiParseText.value = ''; // 清空輸入框
+                        nextTick(initIcons);
+                    } catch (error) {
+                        console.error("AI 解析失敗:", error);
+                        aiErrorMsg.value = "AI 解析失敗，請稍後再試或手動輸入。";
+                        setTimeout(() => aiErrorMsg.value = '', 4000);
+                    } finally {
+                        isParsingAI.value = false;
+                    }
+                };
+
+                // AI 潤飾備註
+                const polishDescriptionWithAI = async () => {
+                    if (!currentEvent.value.extendedProps.description || isPolishing.value) return;
+                    isPolishing.value = true;
+                    aiErrorMsg.value = '';
+                    try {
+                        const prompt = `請將以下活動備註進行潤飾，使其語氣更專業、結構更清晰。可以直接輸出潤飾後的結果，不要包含任何開場白或說明：\n\n"${currentEvent.value.extendedProps.description}"`;
+                        const systemInstruction = "你是一位專業的秘書與文案編輯。";
+                        const result = await callGemini(prompt, false, systemInstruction);
+                        if (result) {
+                            currentEvent.value.extendedProps.description = result.trim();
+                        }
+                    } catch (error) {
+                        console.error("AI 潤飾失敗:", error);
+                        aiErrorMsg.value = "AI 潤飾失敗，請稍後再試。";
+                        setTimeout(() => aiErrorMsg.value = '', 4000);
+                    } finally {
+                        isPolishing.value = false;
+                    }
+                };
+                // ===================================================
+
+                // 初始化 Lucide Icons
+                const initIcons = () => {
+                    nextTick(() => {
+                        if (window.lucide) window.lucide.createIcons();
+                    });
+                };
+
+                // 登入邏輯
+                const login = () => {
+                    if (nameInput.value.trim()) {
+                        currentUser.value = nameInput.value.trim();
+                        localStorage.setItem('cal_user', currentUser.value);
+                        nextTick(() => {
+                            initCalendar();
+                            initIcons();
+                        });
+                    }
+                };
+
+                // 登出邏輯
+                const logout = () => {
+                    currentUser.value = '';
+                    localStorage.removeItem('cal_user');
+                    if (calendar) calendar.destroy();
+                    setTimeout(initIcons, 100);
+                };
+
+                // 格式化日期顯示
+                const formatDateDisplay = (dateStr) => {
+                    if (!dateStr) return '';
+                    const d = new Date(dateStr);
+                    return d.toLocaleString('zh-TW', { 
+                        month: 'short', day: 'numeric', 
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                };
+
+                // ================= 資料庫模擬 (使用 LocalStorage) =================
+                const loadEventsFromDB = () => {
+                    return JSON.parse(localStorage.getItem('cal_events') || '[]');
+                };
+
+                const saveEventsToDB = (eventsArray) => {
+                    localStorage.setItem('cal_events', JSON.stringify(eventsArray));
+                    // 觸發自定義事件，讓同頁面也能感知 (雖然 Vue 自身有 reactivity，但此處配合 FullCalendar 架構)
+                    window.dispatchEvent(new Event('local-events-updated'));
+                };
+
+                // 產生獨一無二的顏色給不同的使用者
+                const getColorForUser = (username) => {
+                    let hash = 0;
+                    for (let i = 0; i < username.length; i++) {
+                        hash = username.charCodeAt(i) + ((hash << 5) - hash);
+                    }
+                    const h = Math.abs(hash) % 360;
+                    return `hsl(${h}, 70%, 45%)`; // 產生一個帶有該名字特徵的顏色
+                };
+
+                // ================= FullCalendar 初始化 =================
+                const initCalendar = () => {
+                    if (!calendarEl.value) return;
+                    
+                    calendar = new FullCalendar.Calendar(calendarEl.value, {
+                        locale: 'zh-tw',
+                        initialView: 'dayGridMonth',
+                        headerToolbar: {
+                            left: 'prev,next today',
+                            center: 'title',
+                            right: 'dayGridMonth,timeGridWeek'
+                        },
+                        events: loadEventsFromDB(), // 初始載入資料
+                        selectable: true,
+                        editable: true, // 允許拖曳
+                        height: '100%',
+                        
+                        // 1. 點擊空白日期：新增活動
+                        select: (info) => {
+                            currentEvent.value = {
+                                id: Date.now().toString(),
+                                title: '',
+                                start: info.startStr,
+                                end: info.endStr || info.startStr,
+                                backgroundColor: getColorForUser(currentUser.value),
+                                borderColor: getColorForUser(currentUser.value),
+                                extendedProps: {
+                                    creator: currentUser.value,
+                                    description: ''
+                                }
+                            };
+                            modalMode.value = 'add';
+                            showModal.value = true;
+                            initIcons();
+                        },
+                        
+                        // 2. 點擊已有活動：檢視或編輯
+                        eventClick: (info) => {
+                            const evt = info.event;
+                            const isCreator = evt.extendedProps.creator === currentUser.value;
+                            
+                            currentEvent.value = {
+                                id: evt.id,
+                                title: evt.title,
+                                start: evt.startStr,
+                                end: evt.endStr || evt.startStr,
+                                backgroundColor: evt.backgroundColor,
+                                borderColor: evt.borderColor,
+                                extendedProps: {
+                                    creator: evt.extendedProps.creator,
+                                    description: evt.extendedProps.description || ''
+                                }
+                            };
+                            
+                            modalMode.value = isCreator ? 'edit' : 'view';
+                            showModal.value = true;
+                            initIcons();
+                        },
+
+                        // 3. 拖曳活動 (變更時間)
+                        eventDrop: (info) => {
+                            if (info.event.extendedProps.creator !== currentUser.value) {
+                                alert('系統提示：您只能移動自己建立的活動喔！');
+                                info.revert();
+                                return;
+                            }
+                            updateEventTime(info.event);
+                        },
+                        eventResize: (info) => {
+                            if (info.event.extendedProps.creator !== currentUser.value) {
+                                alert('系統提示：您只能修改自己建立的活動喔！');
+                                info.revert();
+                                return;
+                            }
+                            updateEventTime(info.event);
+                        }
+                    });
+                    
+                    calendar.render();
+                };
+
+                // 拖曳後更新時間邏輯
+                const updateEventTime = (eventObj) => {
+                    const events = loadEventsFromDB();
+                    const idx = events.findIndex(e => e.id === eventObj.id);
+                    if (idx > -1) {
+                        events[idx].start = eventObj.startStr;
+                        events[idx].end = eventObj.endStr || eventObj.startStr;
+                        saveEventsToDB(events);
+                    }
+                };
+
+                // ================= Modal 操作邏輯 =================
+                const saveEvent = () => {
+                    if (!currentEvent.value.title.trim()) {
+                        alert("請輸入活動標題！");
+                        return;
+                    }
+
+                    const events = loadEventsFromDB();
+                    
+                    if (modalMode.value === 'add') {
+                        events.push({ ...currentEvent.value });
+                    } else if (modalMode.value === 'edit') {
+                        const idx = events.findIndex(e => e.id === currentEvent.value.id);
+                        if (idx > -1) {
+                            events[idx] = { ...currentEvent.value };
+                        }
+                    }
+                    
+                    saveEventsToDB(events);
+                    showModal.value = false;
+                };
+
+                const deleteEvent = () => {
+                    if(confirm('確定要刪除這個活動嗎？')) {
+                        const events = loadEventsFromDB();
+                        const newEvents = events.filter(e => e.id !== currentEvent.value.id);
+                        saveEventsToDB(newEvents);
+                        showModal.value = false;
+                    }
+                };
+
+                // ================= 即時同步邏輯 =================
+                // 刷新日曆畫面資料
+                const refreshCalendarData = () => {
+                    if (calendar) {
+                        const newEvents = loadEventsFromDB();
+                        calendar.removeAllEvents();
+                        calendar.addEventSource(newEvents);
+                    }
+                };
+
+                onMounted(() => {
+                    initIcons();
+                    if (currentUser.value) {
+                        nextTick(() => {
+                            initCalendar();
+                        });
+                    }
+
+                    // 1. 監聽同瀏覽器「其他分頁」的變更 (完美模擬 WebSocket 多人即時更新！)
+                    window.addEventListener('storage', (e) => {
+                        if (e.key === 'cal_events') {
+                            refreshCalendarData();
+                        }
+                    });
+
+                    // 2. 監聽「本頁面」的變更
+                    window.addEventListener('local-events-updated', () => {
+                        refreshCalendarData();
+                    });
+                });
+
+                return {
+                    currentUser, nameInput, login, logout,
+                    calendarEl, showModal, modalMode, currentEvent,
+                    saveEvent, deleteEvent, formatDateDisplay,
+                    // 導出 Gemini API 相關變數與方法給模板使用
+                    aiParseText, isParsingAI, isPolishing, aiErrorMsg, 
+                    parseTextWithAI, polishDescriptionWithAI
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
